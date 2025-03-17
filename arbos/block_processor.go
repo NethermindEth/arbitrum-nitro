@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/offchainlabs/nitro/callstack"
 	"math"
 	"math/big"
 
@@ -208,6 +209,7 @@ func ProduceBlockAdvanced(
 	isMsgForPrefetch bool,
 	runCtx *core.MessageRunContext,
 ) (*types.Block, types.Receipts, error) {
+	callstack.LogCallStack("")
 
 	arbState, err := arbosState.OpenSystemArbosState(statedb, nil, true)
 	if err != nil {

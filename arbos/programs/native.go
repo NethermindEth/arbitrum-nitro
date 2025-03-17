@@ -24,6 +24,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/offchainlabs/nitro/callstack"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
@@ -329,6 +331,8 @@ func callProgram(
 	memoryModel *MemoryModel,
 	runCtx *core.MessageRunContext,
 ) ([]byte, error) {
+	callstack.LogCallStack("")
+
 	db := interpreter.Evm().StateDB
 	debug := stylusParams.DebugMode
 

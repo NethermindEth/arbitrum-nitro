@@ -20,6 +20,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/offchainlabs/nitro/execution/nethexec"
+
 	"github.com/cockroachdb/pebble"
 	"github.com/knadh/koanf"
 	"github.com/knadh/koanf/providers/confmap"
@@ -424,7 +426,6 @@ func mainImpl() int {
 			log.Warn("failed to check if node is compatible with on-chain WASM module root", "err", err)
 		}
 	}
-
 	traceConfig := nodeConfig.Execution.VmTrace
 	var tracer *tracing.Hooks
 	if traceConfig.TracerName != "" {
@@ -436,7 +437,13 @@ func mainImpl() int {
 		log.Info("enabling custom tracer", "name", traceConfig.TracerName)
 	}
 
-	chainDb, l2BlockChain, err := openInitializeChainDb(ctx, stack, nodeConfig, new(big.Int).SetUint64(nodeConfig.Chain.ID), gethexec.DefaultCacheConfigFor(&nodeConfig.Execution.Caching), &nodeConfig.Execution.StylusTarget, tracer, &nodeConfig.Persistent, l1Client, rollupAddrs)
+	nethRpcClient, err := nethexec.NewNethRpcClient()
+	if err != nil {
+		log.Crit("failed to create neth-rpc client", "err", err)
+		return 1
+	}
+
+	chainDb, l2BlockChain, err := openInitializeChainDb(ctx, stack, nodeConfig, new(big.Int).SetUint64(nodeConfig.Chain.ID), gethexec.DefaultCacheConfigFor(&nodeConfig.Execution.Caching), &nodeConfig.Execution.StylusTarget, tracer, &nodeConfig.Persistent, l1Client, nethRpcClient, rollupAddrs)
 	if l2BlockChain != nil {
 		deferFuncs = append(deferFuncs, func() { l2BlockChain.Stop() })
 	}
@@ -520,7 +527,7 @@ func mainImpl() int {
 		}
 	}
 
-	execNode, err := gethexec.CreateExecutionNode(
+	gethNode, err := gethexec.CreateExecutionNode(
 		ctx,
 		stack,
 		chainDb,
@@ -541,6 +548,8 @@ func mainImpl() int {
 		}
 		wasmModuleRoot = locator.LatestWasmModuleRoot()
 	}
+
+	execNode := nethexec.NewNodeWrapper(gethNode, nethRpcClient)
 
 	currentNode, err := arbnode.CreateNodeFullExecutionClient(
 		ctx,
