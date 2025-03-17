@@ -24,6 +24,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/offchainlabs/nitro/callstack"
+
 	"github.com/ethereum/go-ethereum/arbitrum/multigas"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
@@ -376,6 +378,8 @@ func callProgram(
 	memoryModel *MemoryModel,
 	runCtx *core.MessageRunContext,
 ) ([]byte, error) {
+	callstack.LogCallStack("")
+
 	db := evm.StateDB
 	debug := stylusParams.DebugMode
 
