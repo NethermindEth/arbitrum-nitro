@@ -8,6 +8,7 @@ package arbtest
 import "testing"
 
 func TestMockChallengeManagerAsserterIncorrect(t *testing.T) {
+	t.Skip("Many calls to to.Parallel")
 	defaultWasmRootDir := ""
 	for i := int64(1); i <= makeBatch_MsgsPerBatch*3; i++ {
 		RunChallengeTest(t, false, true, i, defaultWasmRootDir)
@@ -15,6 +16,7 @@ func TestMockChallengeManagerAsserterIncorrect(t *testing.T) {
 }
 
 func TestMockChallengeManagerAsserterCorrect(t *testing.T) {
+	t.Skip("Many calls to to.Parallel")
 	defaultWasmRootDir := ""
 	for i := int64(1); i <= makeBatch_MsgsPerBatch*3; i++ {
 		RunChallengeTest(t, true, true, i, defaultWasmRootDir)
