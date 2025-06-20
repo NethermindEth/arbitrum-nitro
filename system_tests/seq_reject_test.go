@@ -24,7 +24,6 @@ import (
 )
 
 func TestSequencerRejection(t *testing.T) {
-	t.Skip("Double t.Parallel")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 

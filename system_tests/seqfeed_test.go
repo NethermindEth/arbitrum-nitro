@@ -55,7 +55,6 @@ func newBroadcastClientConfigTest(port int) *broadcastclient.Config {
 }
 
 func TestSequencerFeed(t *testing.T) {
-	t.Skip("Double node builders used")
 	logHandler := testhelpers.InitTestLog(t, log.LvlTrace)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -99,7 +98,6 @@ func TestSequencerFeed(t *testing.T) {
 }
 
 func TestRelayedSequencerFeed(t *testing.T) {
-	t.Skip("Double node builders used")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
