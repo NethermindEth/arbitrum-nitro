@@ -37,6 +37,7 @@ import (
 	"github.com/offchainlabs/nitro/arbos/burn"
 	"github.com/offchainlabs/nitro/arbos/util"
 	"github.com/offchainlabs/nitro/arbutil"
+	"github.com/offchainlabs/nitro/callstack"
 	"github.com/offchainlabs/nitro/util/containers"
 )
 
