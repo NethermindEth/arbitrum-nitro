@@ -114,10 +114,26 @@ func (w *NodeWrapper) BlockNumberToMessageIndex(blockNum uint64) containers.Prom
 }
 
 func (w *NodeWrapper) SetFinalityData(ctx context.Context, finalityData *arbutil.FinalityData, finalizedFinalityData *arbutil.FinalityData, validatedFinalityData *arbutil.FinalityData) containers.PromiseInterface[struct{}] {
-	// start := time.Now()
-	// log.Info("NodeWrapper: SetFinalityData")
+	start := time.Now()
+	log.Info("NodeWrapper: SetFinalityData",
+		"safeFinalityData", finalityData,
+		"finalizedFinalityData", finalizedFinalityData,
+		"validatedFinalityData", validatedFinalityData)
+
+	// Call Nethermind via JSON-RPC
+	go func() {
+		err := w.rpcClient.SetFinalityData(ctx, finalityData, finalizedFinalityData, validatedFinalityData)
+		if err != nil {
+			log.Error("NodeWrapper: SetFinalityData via JSON-RPC failed", "error", err, "elapsed", time.Since(start))
+		} else {
+			log.Info("NodeWrapper: SetFinalityData via JSON-RPC completed successfully", "elapsed", time.Since(start))
+		}
+	}()
+
+	// Also call the original ExecutionNode method
 	result := w.ExecutionNode.SetFinalityData(ctx, finalityData, finalizedFinalityData, validatedFinalityData)
-	// log.Info("NodeWrapper: SetFinalityData completed", "elapsed", time.Since(start))
+	log.Info("NodeWrapper: SetFinalityData via direct call completed", "elapsed", time.Since(start))
+
 	return result
 }
 
