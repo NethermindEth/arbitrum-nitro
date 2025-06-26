@@ -20,12 +20,20 @@ import (
 
 var digestedMsgCounter uint64
 
+func IsExternalExecutionEnabled() bool {
+	useExternalExecution, err := strconv.ParseBool(os.Getenv("PR_USE_EXTERNAL_EXECUTION"))
+	if err != nil {
+		log.Warn("Wasn't able to read PR_USE_EXTERNAL_EXECUTION, setting to false")
+		return false
+	}
+	return useExternalExecution
+}
+
 type NodeWrapper struct {
 	*gethexec.ExecutionNode
 
-	useExternalExecution bool
-	rpcClient            *NethRpcClient
-	maxMsgsToDigest      uint64
+	rpcClient       *NethRpcClient
+	maxMsgsToDigest uint64
 }
 
 func NewNodeWrapper(node *gethexec.ExecutionNode, rpcClient *NethRpcClient) *NodeWrapper {
@@ -35,17 +43,10 @@ func NewNodeWrapper(node *gethexec.ExecutionNode, rpcClient *NethRpcClient) *Nod
 		maxMsgsToDigest = math.MaxUint64
 	}
 
-	useExternalExecution, err := strconv.ParseBool(os.Getenv("PR_USE_EXTERNAL_EXECUTION"))
-	if err != nil {
-		log.Warn("Wasn't able to read PR_USE_EXTERNAL_EXECUTION, setting to false")
-		useExternalExecution = false
-	}
-
 	return &NodeWrapper{
-		ExecutionNode:        node,
-		useExternalExecution: useExternalExecution,
-		rpcClient:            rpcClient,
-		maxMsgsToDigest:      maxMsgsToDigest,
+		ExecutionNode:   node,
+		rpcClient:       rpcClient,
+		maxMsgsToDigest: maxMsgsToDigest,
 	}
 }
 
@@ -55,18 +56,19 @@ func (w *NodeWrapper) DigestMessage(num arbutil.MessageIndex, msg *arbostypes.Me
 	start := time.Now()
 	log.Info("NodeWrapper: DigestMessage", "num", num)
 
-	if w.useExternalExecution {
-		alreadyDigestedMsgs := atomic.LoadUint64(&digestedMsgCounter)
-		if alreadyDigestedMsgs >= w.maxMsgsToDigest {
-			log.Info("NodeWrapper: Nethermind DigestMessage is skipped. Existing...", "maxMsgsToDigest", w.maxMsgsToDigest, "alreadyDigestedMsgs", alreadyDigestedMsgs)
-			os.Exit(0)
-		}
+	// Check message limit and exit if exceeded
+	alreadyDigestedMsgs := atomic.LoadUint64(&digestedMsgCounter)
+	if alreadyDigestedMsgs >= w.maxMsgsToDigest {
+		log.Info("NodeWrapper: Nethermind DigestMessage is skipped. Exiting...", "maxMsgsToDigest", w.maxMsgsToDigest, "alreadyDigestedMsgs", alreadyDigestedMsgs)
+		os.Exit(0)
+	}
 
-		atomic.AddUint64(&digestedMsgCounter, 1)
+	atomic.AddUint64(&digestedMsgCounter, 1)
 
+	go func() {
 		_ = w.rpcClient.DigestMessage(context.Background(), num, msg, msgForPrefetch)
 		log.Info("NodeWrapper: DigestMessage via JSON-RPC completed", "num", num, "elapsed", time.Since(start))
-	}
+	}()
 
 	result := w.ExecutionNode.DigestMessage(num, msg, msgForPrefetch)
 	log.Info("NodeWrapper: DigestMessage via direct call completed", "num", num, "elapsed", time.Since(start))
@@ -120,17 +122,14 @@ func (w *NodeWrapper) SetFinalityData(ctx context.Context, finalityData *arbutil
 		"finalizedFinalityData", finalizedFinalityData,
 		"validatedFinalityData", validatedFinalityData)
 
-	// Call Nethermind via JSON-RPC only if external execution is enabled
-	if w.useExternalExecution {
-		go func() {
-			err := w.rpcClient.SetFinalityData(ctx, finalityData, finalizedFinalityData, validatedFinalityData)
-			if err != nil {
-				log.Error("NodeWrapper: SetFinalityData via JSON-RPC failed", "error", err, "elapsed", time.Since(start))
-			} else {
-				log.Info("NodeWrapper: SetFinalityData via JSON-RPC completed successfully", "elapsed", time.Since(start))
-			}
-		}()
-	}
+	go func() {
+		err := w.rpcClient.SetFinalityData(ctx, finalityData, finalizedFinalityData, validatedFinalityData)
+		if err != nil {
+			log.Error("NodeWrapper: SetFinalityData via JSON-RPC failed", "error", err, "elapsed", time.Since(start))
+		} else {
+			log.Info("NodeWrapper: SetFinalityData via JSON-RPC completed successfully", "elapsed", time.Since(start))
+		}
+	}()
 
 	// Also call the original ExecutionNode method
 	result := w.ExecutionNode.SetFinalityData(ctx, finalityData, finalizedFinalityData, validatedFinalityData)

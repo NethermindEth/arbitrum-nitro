@@ -101,3 +101,9 @@ type FullConsensusClient interface {
 	ConsensusInfo
 	ConsensusSequencer
 }
+
+type FullExecutionClient interface {
+	ExecutionSequencer // includes ExecutionClient
+	ExecutionRecorder
+	ExecutionBatchPoster
+}

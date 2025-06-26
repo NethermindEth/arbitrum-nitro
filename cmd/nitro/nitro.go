@@ -56,6 +56,7 @@ import (
 	"github.com/offchainlabs/nitro/cmd/util/confighelpers"
 	"github.com/offchainlabs/nitro/daprovider"
 	"github.com/offchainlabs/nitro/daprovider/das"
+	"github.com/offchainlabs/nitro/execution"
 	"github.com/offchainlabs/nitro/execution/gethexec"
 	"github.com/offchainlabs/nitro/execution/nethexec"
 	_ "github.com/offchainlabs/nitro/execution/nodeInterface"
@@ -434,10 +435,14 @@ func mainImpl() int {
 		log.Info("enabling custom tracer", "name", traceConfig.TracerName)
 	}
 
-	nethRpcClient, err := nethexec.NewNethRpcClient()
-	if err != nil {
-		log.Crit("failed to create neth-rpc client", "err", err)
-		return 1
+	var nethRpcClient *nethexec.NethRpcClient
+	if nethexec.IsExternalExecutionEnabled() {
+		var err error
+		nethRpcClient, err = nethexec.NewNethRpcClient()
+		if err != nil {
+			log.Crit("failed to create neth-rpc client", "err", err)
+			return 1
+		}
 	}
 
 	chainDb, l2BlockChain, err := openInitializeChainDb(ctx, stack, nodeConfig, new(big.Int).SetUint64(nodeConfig.Chain.ID), gethexec.DefaultCacheConfigFor(stack, &nodeConfig.Execution.Caching), &nodeConfig.Execution.StylusTarget, tracer, &nodeConfig.Persistent, l1Client, nethRpcClient, rollupAddrs)
@@ -542,7 +547,16 @@ func mainImpl() int {
 		log.Error("failed to create machine locator: %w", err)
 	}
 
-	execNode := nethexec.NewNodeWrapper(gethNode, nethRpcClient)
+	// Create execution node based on external execution setting
+	var execNode execution.FullExecutionClient
+
+	if nethexec.IsExternalExecutionEnabled() {
+		execNode = nethexec.NewNodeWrapper(gethNode, nethRpcClient)
+		log.Info("Using NodeWrapper with external execution enabled")
+	} else {
+		execNode = gethNode
+		log.Info("Using gethNode directly (external execution disabled)")
+	}
 
 	currentNode, err := arbnode.CreateNodeFullExecutionClient(
 		ctx,
@@ -676,7 +690,7 @@ func mainImpl() int {
 
 	gqlConf := nodeConfig.GraphQL
 	if gqlConf.Enable {
-		if err := graphql.New(stack, execNode.Backend.APIBackend(), execNode.FilterSystem, gqlConf.CORSDomain, gqlConf.VHosts); err != nil {
+		if err := graphql.New(stack, gethNode.Backend.APIBackend(), gethNode.FilterSystem, gqlConf.CORSDomain, gqlConf.VHosts); err != nil {
 			log.Error("failed to register the GraphQL service", "err", err)
 			return 1
 		}
@@ -712,7 +726,7 @@ func mainImpl() int {
 		}
 	}
 
-	err = execNode.InitializeTimeboost(ctx, chainInfo.ChainConfig)
+	err = gethNode.InitializeTimeboost(ctx, chainInfo.ChainConfig)
 	if err != nil {
 		fatalErrChan <- fmt.Errorf("error intializing timeboost: %w", err)
 	}
