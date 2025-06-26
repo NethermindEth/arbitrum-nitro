@@ -120,15 +120,17 @@ func (w *NodeWrapper) SetFinalityData(ctx context.Context, finalityData *arbutil
 		"finalizedFinalityData", finalizedFinalityData,
 		"validatedFinalityData", validatedFinalityData)
 
-	// Call Nethermind via JSON-RPC
-	go func() {
-		err := w.rpcClient.SetFinalityData(ctx, finalityData, finalizedFinalityData, validatedFinalityData)
-		if err != nil {
-			log.Error("NodeWrapper: SetFinalityData via JSON-RPC failed", "error", err, "elapsed", time.Since(start))
-		} else {
-			log.Info("NodeWrapper: SetFinalityData via JSON-RPC completed successfully", "elapsed", time.Since(start))
-		}
-	}()
+	// Call Nethermind via JSON-RPC only if external execution is enabled
+	if w.useExternalExecution {
+		go func() {
+			err := w.rpcClient.SetFinalityData(ctx, finalityData, finalizedFinalityData, validatedFinalityData)
+			if err != nil {
+				log.Error("NodeWrapper: SetFinalityData via JSON-RPC failed", "error", err, "elapsed", time.Since(start))
+			} else {
+				log.Info("NodeWrapper: SetFinalityData via JSON-RPC completed successfully", "elapsed", time.Since(start))
+			}
+		}()
+	}
 
 	// Also call the original ExecutionNode method
 	result := w.ExecutionNode.SetFinalityData(ctx, finalityData, finalizedFinalityData, validatedFinalityData)
