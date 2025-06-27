@@ -20,6 +20,12 @@ import (
 
 var digestedMsgCounter uint64
 
+type FullExecutionClient interface {
+	execution.ExecutionSequencer // includes ExecutionClient
+	execution.ExecutionRecorder
+	execution.ExecutionBatchPoster
+}
+
 func IsExternalExecutionEnabled() bool {
 	useExternalExecution, err := strconv.ParseBool(os.Getenv("PR_USE_EXTERNAL_EXECUTION"))
 	if err != nil {

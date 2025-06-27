@@ -21,11 +21,6 @@ import (
 	"time"
 
 	"github.com/cockroachdb/pebble"
-	"github.com/knadh/koanf"
-	"github.com/knadh/koanf/providers/confmap"
-	flag "github.com/spf13/pflag"
-	"github.com/syndtr/goleveldb/leveldb"
-
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/accounts/keystore"
@@ -44,7 +39,8 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/node"
 	"github.com/ethereum/go-ethereum/params"
-
+	"github.com/knadh/koanf"
+	"github.com/knadh/koanf/providers/confmap"
 	"github.com/offchainlabs/nitro/arbnode"
 	"github.com/offchainlabs/nitro/arbnode/resourcemanager"
 	"github.com/offchainlabs/nitro/arbutil"
@@ -56,7 +52,6 @@ import (
 	"github.com/offchainlabs/nitro/cmd/util/confighelpers"
 	"github.com/offchainlabs/nitro/daprovider"
 	"github.com/offchainlabs/nitro/daprovider/das"
-	"github.com/offchainlabs/nitro/execution"
 	"github.com/offchainlabs/nitro/execution/gethexec"
 	"github.com/offchainlabs/nitro/execution/nethexec"
 	_ "github.com/offchainlabs/nitro/execution/nodeInterface"
@@ -73,6 +68,8 @@ import (
 	"github.com/offchainlabs/nitro/util/signature"
 	"github.com/offchainlabs/nitro/validator/server_common"
 	"github.com/offchainlabs/nitro/validator/valnode"
+	flag "github.com/spf13/pflag"
+	"github.com/syndtr/goleveldb/leveldb"
 )
 
 func printSampleUsage(name string) {
@@ -435,14 +432,10 @@ func mainImpl() int {
 		log.Info("enabling custom tracer", "name", traceConfig.TracerName)
 	}
 
-	var nethRpcClient *nethexec.NethRpcClient
-	if nethexec.IsExternalExecutionEnabled() {
-		var err error
-		nethRpcClient, err = nethexec.NewNethRpcClient()
-		if err != nil {
-			log.Crit("failed to create neth-rpc client", "err", err)
-			return 1
-		}
+	nethRpcClient, err := nethexec.NewNethRpcClient()
+	if err != nil {
+		log.Crit("failed to create neth-rpc client", "err", err)
+		return 1
 	}
 
 	chainDb, l2BlockChain, err := openInitializeChainDb(ctx, stack, nodeConfig, new(big.Int).SetUint64(nodeConfig.Chain.ID), gethexec.DefaultCacheConfigFor(stack, &nodeConfig.Execution.Caching), &nodeConfig.Execution.StylusTarget, tracer, &nodeConfig.Persistent, l1Client, nethRpcClient, rollupAddrs)
@@ -548,7 +541,7 @@ func mainImpl() int {
 	}
 
 	// Create execution node based on external execution setting
-	var execNode execution.FullExecutionClient
+	var execNode nethexec.FullExecutionClient
 
 	if nethexec.IsExternalExecutionEnabled() {
 		execNode = nethexec.NewNodeWrapper(gethNode, nethRpcClient)
