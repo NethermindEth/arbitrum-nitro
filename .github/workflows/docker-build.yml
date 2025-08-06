@@ -17,6 +17,6 @@ jobs:
     uses: NethermindEth/github-workflows/.github/workflows/docker-build-push-jfrog.yaml@v1.3.2
     with:
       group_name: core
-      image_name: nitro-node
+      image_name: ${{ github.event.inputs.image-name || 'arbitrum-nitro' }}
       platforms: "linux/amd64"
       push: ${{ github.event_name != 'pull_request' }}
