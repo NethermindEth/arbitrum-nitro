@@ -18,4 +18,4 @@ jobs:
     with:
       group_name: core
       image_name: 'arbitrum-nitro'
-      platforms: "linux/amd64"
+      platforms: "linux/amd64,linux/arm64"
