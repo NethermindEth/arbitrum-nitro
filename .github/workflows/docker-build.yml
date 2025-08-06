@@ -19,4 +19,3 @@ jobs:
       group_name: core
       image_name: ${{ github.event.inputs.image-name || 'arbitrum-nitro' }}
       platforms: "linux/amd64"
-      push: ${{ github.event_name != 'pull_request' }}
