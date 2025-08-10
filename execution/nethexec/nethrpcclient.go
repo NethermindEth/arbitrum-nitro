@@ -2,6 +2,7 @@ package nethexec
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math/big"
 	"net/http"
@@ -50,6 +51,11 @@ type RpcFinalityData struct {
 	BlockHash common.Hash `json:"blockHash"`
 }
 
+type SequenceDelayedMessageParams struct {
+	DelayedSeqNum uint64                        `json:"delayedSeqNum"`
+	Message       *arbostypes.L1IncomingMessage `json:"message"`
+}
+
 func NewNethRpcClient() (*NethRpcClient, error) {
 	url, exists := os.LookupEnv("PR_NETH_RPC_CLIENT_URL")
 	if !exists {
@@ -89,6 +95,12 @@ func (c *NethRpcClient) DigestMessage(ctx context.Context, num arbutil.MessageIn
 		"num", num,
 		"messageType", msg.Message.Header.Kind)
 
+	if payload, marshalErr := json.Marshal(params); marshalErr == nil {
+		fmt.Println("DigestMessage request:", string(payload))
+	} else {
+		log.Warn("Failed to marshal DigestMessage params to JSON", "error", marshalErr)
+	}
+
 	var result execution.MessageResult
 	err := c.client.CallContext(ctx, &result, "DigestMessage", params)
 	if err != nil {
@@ -96,6 +108,28 @@ func (c *NethRpcClient) DigestMessage(ctx context.Context, num arbutil.MessageIn
 	}
 
 	return &result
+}
+
+// SequenceDelayedMessage forwards a delayed inbox message to Nethermind for sequencing.
+// Note: servers may alternatively accept this via DigestMessage with the delayed index.
+func (c *NethRpcClient) SequenceDelayedMessage(ctx context.Context, delayedSeqNum uint64, message *arbostypes.L1IncomingMessage) error {
+	params := SequenceDelayedMessageParams{
+		DelayedSeqNum: delayedSeqNum,
+		Message:       message,
+	}
+
+	log.Info("Making JSON-RPC call to SequenceDelayedMessage",
+		"url", c.url,
+		"delayedSeqNum", delayedSeqNum,
+		"messageType", message.Header.Kind)
+
+	// Print JSON payload to the terminal for easier debugging
+
+	var result interface{}
+	if err := c.client.CallContext(ctx, &result, "SequenceDelayedMessage", params); err != nil {
+		return fmt.Errorf("failed to call SequenceDelayedMessage: %w", err)
+	}
+	return nil
 }
 
 func (c *NethRpcClient) DigestInitMessage(ctx context.Context, initialL1BaseFee *big.Int, serializedChainConfig []byte) *execution.MessageResult {
@@ -120,6 +154,12 @@ func (c *NethRpcClient) DigestInitMessage(ctx context.Context, initialL1BaseFee 
 		"url", c.url,
 		"initialL1BaseFee", initialL1BaseFee,
 		"len(serializedChainConfig)", len(serializedChainConfig))
+
+	if payload, marshalErr := json.Marshal(params); marshalErr == nil {
+		fmt.Println("DigestInitMessage request:", string(payload))
+	} else {
+		log.Warn("Failed to marshal DigestInitMessage params to JSON", "error", marshalErr)
+	}
 
 	err = c.client.CallContext(ctx, &result, "DigestInitMessage", params)
 	if err != nil {

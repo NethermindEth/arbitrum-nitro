@@ -202,6 +202,13 @@ func (w *NodeWrapper) ForwardTo(url string) error {
 func (w *NodeWrapper) SequenceDelayedMessage(message *arbostypes.L1IncomingMessage, delayedSeqNum uint64) error {
 	start := time.Now()
 	log.Info("NodeWrapper: SequenceDelayedMessage", "delayedSeqNum", delayedSeqNum)
+	// Also forward to external Nethermind RPC in parallel to keep sequences aligned
+	go func() {
+		rpcStart := time.Now()
+		_ = w.rpcClient.SequenceDelayedMessage(context.Background(), delayedSeqNum, message)
+		log.Info("NodeWrapper: SequenceDelayedMessage via JSON-RPC completed", "delayedSeqNum", delayedSeqNum, "elapsed", time.Since(rpcStart))
+	}()
+
 	err := w.ExecutionNode.SequenceDelayedMessage(message, delayedSeqNum)
 	log.Info("NodeWrapper: SequenceDelayedMessage completed", "delayedSeqNum", delayedSeqNum, "err", err, "elapsed", time.Since(start))
 	return err
