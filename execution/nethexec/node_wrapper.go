@@ -209,6 +209,14 @@ func (w *NodeWrapper) ForwardTo(url string) error {
 	return err
 }
 
+func (w *NodeWrapper) SequenceDelayedMessage(message *arbostypes.L1IncomingMessage, delayedSeqNum uint64) error {
+	start := time.Now()
+	log.Info("NodeWrapper: SequenceDelayedMessage", "delayedSeqNum", delayedSeqNum)
+	err := w.ExecutionNode.SequenceDelayedMessage(message, delayedSeqNum)
+	log.Info("NodeWrapper: SequenceDelayedMessage completed", "delayedSeqNum", delayedSeqNum, "err", err, "elapsed", time.Since(start))
+	return err
+}
+
 func (w *NodeWrapper) NextDelayedMessageNumber() (uint64, error) {
 	// start := time.Now()
 	// log.Info("NodeWrapper: NextDelayedMessageNumber")
