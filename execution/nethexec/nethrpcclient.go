@@ -20,10 +20,6 @@ import (
 
 var defaultUrl = "http://localhost:20545"
 
-type RemoteExecutionRpcClient interface {
-	DigestInitMessage(ctx context.Context, initialL1BaseFee *big.Int, serializedChainConfig []byte) *execution.MessageResult
-}
-
 type NethRpcClient struct {
 	client *rpc.Client
 	url    string
@@ -51,10 +47,19 @@ type RpcFinalityData struct {
 	BlockHash common.Hash `json:"blockHash"`
 }
 
-type SequenceDelayedMessageParams struct {
-	DelayedSeqNum uint64                        `json:"delayedSeqNum"`
-	Message       *arbostypes.L1IncomingMessage `json:"message"`
+type InitMessageDigester interface {
+	DigestInitMessage(ctx context.Context, initialL1BaseFee *big.Int, serializedChainConfig []byte) *execution.MessageResult
 }
+
+type FakeRemoteExecutionRpcClient struct{}
+
+func (n *FakeRemoteExecutionRpcClient) DigestInitMessage(ctx context.Context, initialL1BaseFee *big.Int, serializedChainConfig []byte) *execution.MessageResult {
+	return &execution.MessageResult{}
+}
+
+var _ InitMessageDigester = (*FakeRemoteExecutionRpcClient)(nil)
+
+var _ InitMessageDigester = (*NethRpcClient)(nil)
 
 func NewNethRpcClient() (*NethRpcClient, error) {
 	url, exists := os.LookupEnv("PR_NETH_RPC_CLIENT_URL")
@@ -93,7 +98,8 @@ func (c *NethRpcClient) DigestMessage(ctx context.Context, num arbutil.MessageIn
 	log.Info("Making JSON-RPC call to DigestMessage",
 		"url", c.url,
 		"num", num,
-		"messageType", msg.Message.Header.Kind)
+		"messageType", msg.Message.Header.Kind,
+	)
 
 	if payload, marshalErr := json.Marshal(params); marshalErr == nil {
 		fmt.Println("DigestMessage request:", string(payload))
@@ -104,32 +110,11 @@ func (c *NethRpcClient) DigestMessage(ctx context.Context, num arbutil.MessageIn
 	var result execution.MessageResult
 	err := c.client.CallContext(ctx, &result, "DigestMessage", params)
 	if err != nil {
-		panic(fmt.Sprintf("failed to call DigestMessage: %v", err))
+		log.Error("Failed to call DigestMessage", "error", err)
+		return nil
 	}
 
 	return &result
-}
-
-// SequenceDelayedMessage forwards a delayed inbox message to Nethermind for sequencing.
-// Note: servers may alternatively accept this via DigestMessage with the delayed index.
-func (c *NethRpcClient) SequenceDelayedMessage(ctx context.Context, delayedSeqNum uint64, message *arbostypes.L1IncomingMessage) error {
-	params := SequenceDelayedMessageParams{
-		DelayedSeqNum: delayedSeqNum,
-		Message:       message,
-	}
-
-	log.Info("Making JSON-RPC call to SequenceDelayedMessage",
-		"url", c.url,
-		"delayedSeqNum", delayedSeqNum,
-		"messageType", message.Header.Kind)
-
-	// Print JSON payload to the terminal for easier debugging
-
-	var result interface{}
-	if err := c.client.CallContext(ctx, &result, "SequenceDelayedMessage", params); err != nil {
-		return fmt.Errorf("failed to call SequenceDelayedMessage: %w", err)
-	}
-	return nil
 }
 
 func (c *NethRpcClient) DigestInitMessage(ctx context.Context, initialL1BaseFee *big.Int, serializedChainConfig []byte) *execution.MessageResult {
@@ -167,12 +152,6 @@ func (c *NethRpcClient) DigestInitMessage(ctx context.Context, initialL1BaseFee 
 	}
 
 	return &result
-}
-
-type FakeRemoteExecutionRpcClient struct{}
-
-func (c FakeRemoteExecutionRpcClient) DigestInitMessage(ctx context.Context, initialL1BaseFee *big.Int, serializedChainConfig []byte) *execution.MessageResult {
-	return nil
 }
 
 func (c *NethRpcClient) SetFinalityData(ctx context.Context, safeFinalityData *arbutil.FinalityData, finalizedFinalityData *arbutil.FinalityData, validatedFinalityData *arbutil.FinalityData) error {
