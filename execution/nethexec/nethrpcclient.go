@@ -2,12 +2,10 @@ package nethexec
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math/big"
 	"net/http"
 	"os"
-	"strconv"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -101,12 +99,6 @@ func (c *NethRpcClient) DigestMessage(ctx context.Context, num arbutil.MessageIn
 		"messageType", msg.Message.Header.Kind,
 	)
 
-	if payload, marshalErr := json.Marshal(params); marshalErr == nil {
-		fmt.Println("DigestMessage request:", string(payload))
-	} else {
-		log.Warn("Failed to marshal DigestMessage params to JSON", "error", marshalErr)
-	}
-
 	var result execution.MessageResult
 	err := c.client.CallContext(ctx, &result, "DigestMessage", params)
 	if err != nil {
@@ -118,17 +110,7 @@ func (c *NethRpcClient) DigestMessage(ctx context.Context, num arbutil.MessageIn
 }
 
 func (c *NethRpcClient) DigestInitMessage(ctx context.Context, initialL1BaseFee *big.Int, serializedChainConfig []byte) *execution.MessageResult {
-	useExternalExecution, err := strconv.ParseBool(os.Getenv("PR_USE_EXTERNAL_EXECUTION"))
-	if err != nil {
-		log.Warn("Wasn't able to read PR_USE_EXTERNAL_EXECUTION, setting to false")
-		useExternalExecution = false
-	}
-
 	var result execution.MessageResult
-
-	if !useExternalExecution {
-		return &result
-	}
 
 	params := InitializeMessageParams{
 		InitialL1BaseFee:      initialL1BaseFee,
@@ -140,14 +122,7 @@ func (c *NethRpcClient) DigestInitMessage(ctx context.Context, initialL1BaseFee 
 		"initialL1BaseFee", initialL1BaseFee,
 		"len(serializedChainConfig)", len(serializedChainConfig))
 
-	if payload, marshalErr := json.Marshal(params); marshalErr == nil {
-		fmt.Println("DigestInitMessage request:", string(payload))
-	} else {
-		log.Warn("Failed to marshal DigestInitMessage params to JSON", "error", marshalErr)
-	}
-
-	err = c.client.CallContext(ctx, &result, "DigestInitMessage", params)
-	if err != nil {
+	if err := c.client.CallContext(ctx, &result, "DigestInitMessage", params); err != nil {
 		panic(fmt.Sprintf("failed to call DigestInitMessage: %v", err))
 	}
 
