@@ -13,25 +13,25 @@ import (
 )
 
 var (
-	_ FullExecutionClient         = (*NethermindExecutionClient)(nil)
-	_ arbnode.ExecutionNodeBridge = (*NethermindExecutionClient)(nil)
+	_ FullExecutionClient         = (*nethermindExecutionClient)(nil)
+	_ arbnode.ExecutionNodeBridge = (*nethermindExecutionClient)(nil)
 )
 
-type NethermindExecutionClient struct {
-	rpcClient *NethRpcClient
+type nethermindExecutionClient struct {
+	rpcClient *nethRpcClient
 }
 
-func NewNethermindExecutionClient() (*NethermindExecutionClient, error) {
+func NewNethermindExecutionClient() (*nethermindExecutionClient, error) {
 	rpcClient, err := NewNethRpcClient()
 	if err != nil {
 		return nil, err
 	}
-	return &NethermindExecutionClient{
+	return &nethermindExecutionClient{
 		rpcClient: rpcClient,
 	}, nil
 }
 
-func (p *NethermindExecutionClient) DigestMessage(num arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata, msgForPrefetch *arbostypes.MessageWithMetadata) containers.PromiseInterface[*execution.MessageResult] {
+func (p *nethermindExecutionClient) DigestMessage(num arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata, msgForPrefetch *arbostypes.MessageWithMetadata) containers.PromiseInterface[*execution.MessageResult] {
 	promise := containers.NewPromise[*execution.MessageResult](nil)
 	go func() {
 		res := p.rpcClient.DigestMessage(context.Background(), num, msg, msgForPrefetch)
@@ -44,7 +44,7 @@ func (p *NethermindExecutionClient) DigestMessage(num arbutil.MessageIndex, msg 
 	return &promise
 }
 
-func (p *NethermindExecutionClient) SetFinalityData(ctx context.Context, safeFinalityData *arbutil.FinalityData, finalizedFinalityData *arbutil.FinalityData, validatedFinalityData *arbutil.FinalityData) containers.PromiseInterface[struct{}] {
+func (p *nethermindExecutionClient) SetFinalityData(ctx context.Context, safeFinalityData *arbutil.FinalityData, finalizedFinalityData *arbutil.FinalityData, validatedFinalityData *arbutil.FinalityData) containers.PromiseInterface[struct{}] {
 	promise := containers.NewPromise[struct{}](nil)
 	go func() {
 		err := p.rpcClient.SetFinalityData(ctx, safeFinalityData, finalizedFinalityData, validatedFinalityData)
@@ -56,112 +56,119 @@ func (p *NethermindExecutionClient) SetFinalityData(ctx context.Context, safeFin
 	}()
 	return &promise
 }
-func (p *NethermindExecutionClient) Reorg(msgIdxOfFirstMsgToAdd arbutil.MessageIndex, newMessages []arbostypes.MessageWithMetadataAndBlockInfo, oldMessages []*arbostypes.MessageWithMetadata) containers.PromiseInterface[[]*execution.MessageResult] {
-	//TODO implement me
-	panic("implement me")
+func (p *nethermindExecutionClient) Reorg(msgIdxOfFirstMsgToAdd arbutil.MessageIndex, newMessages []arbostypes.MessageWithMetadataAndBlockInfo, oldMessages []*arbostypes.MessageWithMetadata) containers.PromiseInterface[[]*execution.MessageResult] {
+	promise := containers.NewPromise[[]*execution.MessageResult](nil)
+	go func() {
+		promise.ProduceError(fmt.Errorf("Reorg not implemented"))
+	}()
+	return &promise
 }
 
-func (p *NethermindExecutionClient) HeadMessageIndex() containers.PromiseInterface[arbutil.MessageIndex] {
-	//TODO implement me
-	panic("implement me")
+func (p *nethermindExecutionClient) HeadMessageIndex() containers.PromiseInterface[arbutil.MessageIndex] {
+	promise := containers.NewPromise[arbutil.MessageIndex](nil)
+	go func() {
+		promise.ProduceError(fmt.Errorf("HeadMessageIndex not implemented"))
+	}()
+	return &promise
 }
 
-func (p *NethermindExecutionClient) ResultAtMessageIndex(msgIdx arbutil.MessageIndex) containers.PromiseInterface[*execution.MessageResult] {
-	//TODO implement me
-	panic("implement me")
+func (p *nethermindExecutionClient) ResultAtMessageIndex(msgIdx arbutil.MessageIndex) containers.PromiseInterface[*execution.MessageResult] {
+	promise := containers.NewPromise[*execution.MessageResult](nil)
+	go func() {
+		promise.ProduceError(fmt.Errorf("ResultAtMessageIndex not implemented"))
+	}()
+	return &promise
 }
 
-func (p *NethermindExecutionClient) MessageIndexToBlockNumber(messageNum arbutil.MessageIndex) containers.PromiseInterface[uint64] {
-	//TODO implement me
-	panic("implement me")
+func (p *nethermindExecutionClient) MessageIndexToBlockNumber(messageNum arbutil.MessageIndex) containers.PromiseInterface[uint64] {
+	promise := containers.NewPromise[uint64](nil)
+	go func() {
+		promise.ProduceError(fmt.Errorf("MessageIndexToBlockNumber not implemented"))
+	}()
+	return &promise
 }
 
-func (p *NethermindExecutionClient) BlockNumberToMessageIndex(blockNum uint64) containers.PromiseInterface[arbutil.MessageIndex] {
-	//TODO implement me
-	panic("implement me")
+func (p *nethermindExecutionClient) BlockNumberToMessageIndex(blockNum uint64) containers.PromiseInterface[arbutil.MessageIndex] {
+	promise := containers.NewPromise[arbutil.MessageIndex](nil)
+	go func() {
+		promise.ProduceError(fmt.Errorf("BlockNumberToMessageIndex not implemented"))
+	}()
+	return &promise
 }
 
-func (p *NethermindExecutionClient) MarkFeedStart(to arbutil.MessageIndex) containers.PromiseInterface[struct{}] {
-	//TODO implement me
-	panic("implement me")
+func (p *nethermindExecutionClient) MarkFeedStart(to arbutil.MessageIndex) containers.PromiseInterface[struct{}] {
+	promise := containers.NewPromise[struct{}](nil)
+	go func() {
+		promise.ProduceError(fmt.Errorf("MarkFeedStart not implemented"))
+	}()
+	return &promise
 }
 
-func (p *NethermindExecutionClient) Maintenance() containers.PromiseInterface[struct{}] {
-	//TODO implement me
-	panic("implement me")
+func (p *nethermindExecutionClient) Maintenance() containers.PromiseInterface[struct{}] {
+	promise := containers.NewPromise[struct{}](nil)
+	go func() {
+		promise.ProduceError(fmt.Errorf("Maintenance not implemented"))
+	}()
+	return &promise
 }
 
-func (p *NethermindExecutionClient) Start(ctx context.Context) error {
-	//TODO implement me
-	panic("implement me")
+func (p *nethermindExecutionClient) Start(ctx context.Context) error {
+	return fmt.Errorf("Start not implemented")
 }
 
-func (p *NethermindExecutionClient) StopAndWait() {
-	//TODO implement me
-	panic("implement me")
+func (p *nethermindExecutionClient) StopAndWait() {
+	// no-op default until implemented
 }
 
-func (p *NethermindExecutionClient) Pause() {
-	//TODO implement me
-	panic("implement me")
+func (p *nethermindExecutionClient) Pause() {
+	// no-op default until implemented
 }
 
-func (p *NethermindExecutionClient) Activate() {
-	//TODO implement me
-	panic("implement me")
+func (p *nethermindExecutionClient) Activate() {
+	// no-op default until implemented
 }
 
-func (p *NethermindExecutionClient) ForwardTo(url string) error {
-	//TODO implement me
-	panic("implement me")
+func (p *nethermindExecutionClient) ForwardTo(url string) error {
+	return fmt.Errorf("ForwardTo not implemented")
 }
 
-func (p *NethermindExecutionClient) SequenceDelayedMessage(message *arbostypes.L1IncomingMessage, delayedSeqNum uint64) error {
-	//TODO implement me
-	panic("implement me")
+func (p *nethermindExecutionClient) SequenceDelayedMessage(message *arbostypes.L1IncomingMessage, delayedSeqNum uint64) error {
+	return fmt.Errorf("SequenceDelayedMessage not implemented")
 }
 
-func (p *NethermindExecutionClient) NextDelayedMessageNumber() (uint64, error) {
-	//TODO implement me
-	panic("implement me")
+func (p *nethermindExecutionClient) NextDelayedMessageNumber() (uint64, error) {
+	return 0, fmt.Errorf("NextDelayedMessageNumber not implemented")
 }
 
-func (p *NethermindExecutionClient) Synced(ctx context.Context) bool {
-	//TODO implement me
-	panic("implement me")
+func (p *nethermindExecutionClient) Synced(ctx context.Context) bool {
+	// default conservative value until implemented
+	return false
 }
 
-func (p *NethermindExecutionClient) FullSyncProgressMap(ctx context.Context) map[string]interface{} {
-	//TODO implement me
-	panic("implement me")
+func (p *nethermindExecutionClient) FullSyncProgressMap(ctx context.Context) map[string]interface{} {
+	return map[string]interface{}{}
 }
 
-func (p *NethermindExecutionClient) RecordBlockCreation(ctx context.Context, pos arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata) (*execution.RecordResult, error) {
-	//TODO implement me
-	panic("implement me")
+func (p *nethermindExecutionClient) RecordBlockCreation(ctx context.Context, pos arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata) (*execution.RecordResult, error) {
+	return nil, fmt.Errorf("RecordBlockCreation not implemented")
 }
 
-func (p *NethermindExecutionClient) MarkValid(pos arbutil.MessageIndex, resultHash common.Hash) {
-	//TODO implement me
-	panic("implement me")
+func (p *nethermindExecutionClient) MarkValid(pos arbutil.MessageIndex, resultHash common.Hash) {
+	// no-op until implemented
 }
 
-func (p *NethermindExecutionClient) PrepareForRecord(ctx context.Context, start, end arbutil.MessageIndex) error {
-	//TODO implement me
-	panic("implement me")
+func (p *nethermindExecutionClient) PrepareForRecord(ctx context.Context, start, end arbutil.MessageIndex) error {
+	return fmt.Errorf("PrepareForRecord not implemented")
 }
 
-func (p *NethermindExecutionClient) ArbOSVersionForMessageIndex(msgIdx arbutil.MessageIndex) (uint64, error) {
-	//TODO implement me
-	panic("implement me")
+func (p *nethermindExecutionClient) ArbOSVersionForMessageIndex(msgIdx arbutil.MessageIndex) (uint64, error) {
+	return 0, fmt.Errorf("ArbOSVersionForMessageIndex not implemented")
 }
 
-func (w *NethermindExecutionClient) SetConsensusClient(consensus execution.FullConsensusClient) {
-	// TODO: implement me
-	panic("implement me")
+func (w *nethermindExecutionClient) SetConsensusClient(consensus execution.FullConsensusClient) {
+	// no-op until consensus path is implemented
 }
 
-func (w *NethermindExecutionClient) Initialize(ctx context.Context) error {
-	// TODO: implement me
-	panic("implement me")
+func (w *nethermindExecutionClient) Initialize(ctx context.Context) error {
+	return fmt.Errorf("Initialize not implemented")
 }

@@ -18,29 +18,29 @@ import (
 
 var defaultUrl = "http://localhost:20545"
 
-type NethRpcClient struct {
+type nethRpcClient struct {
 	client *rpc.Client
 	url    string
 }
 
-type MessageParams struct {
+type messageParams struct {
 	Number             arbutil.MessageIndex            `json:"number"`
 	Message            *arbostypes.MessageWithMetadata `json:"message"`
 	MessageForPrefetch *arbostypes.MessageWithMetadata `json:"messageForPrefetch,omitempty"`
 }
 
-type InitializeMessageParams struct {
+type initializeMessageParams struct {
 	InitialL1BaseFee      *big.Int `json:"initialL1BaseFee"`
 	SerializedChainConfig []byte   `json:"serializedChainConfig"`
 }
 
-type SetFinalityDataParams struct {
-	SafeFinalityData      *RpcFinalityData `json:"safeFinalityData,omitempty"`
-	FinalizedFinalityData *RpcFinalityData `json:"finalizedFinalityData,omitempty"`
-	ValidatedFinalityData *RpcFinalityData `json:"validatedFinalityData,omitempty"`
+type setFinalityDataParams struct {
+	SafeFinalityData      *rpcFinalityData `json:"safeFinalityData,omitempty"`
+	FinalizedFinalityData *rpcFinalityData `json:"finalizedFinalityData,omitempty"`
+	ValidatedFinalityData *rpcFinalityData `json:"validatedFinalityData,omitempty"`
 }
 
-type RpcFinalityData struct {
+type rpcFinalityData struct {
 	MsgIdx    uint64      `json:"msgIdx"`
 	BlockHash common.Hash `json:"blockHash"`
 }
@@ -49,17 +49,22 @@ type InitMessageDigester interface {
 	DigestInitMessage(ctx context.Context, initialL1BaseFee *big.Int, serializedChainConfig []byte) *execution.MessageResult
 }
 
-type FakeRemoteExecutionRpcClient struct{}
+type fakeRemoteExecutionRpcClient struct{}
 
-func (n *FakeRemoteExecutionRpcClient) DigestInitMessage(ctx context.Context, initialL1BaseFee *big.Int, serializedChainConfig []byte) *execution.MessageResult {
+func NewFakeRemoteExecutionRpcClient() *fakeRemoteExecutionRpcClient {
+	return &fakeRemoteExecutionRpcClient{}
+}
+
+func (n *fakeRemoteExecutionRpcClient) DigestInitMessage(ctx context.Context, initialL1BaseFee *big.Int, serializedChainConfig []byte) *execution.MessageResult {
 	return &execution.MessageResult{}
 }
 
-var _ InitMessageDigester = (*FakeRemoteExecutionRpcClient)(nil)
+var (
+	_ InitMessageDigester = (*fakeRemoteExecutionRpcClient)(nil)
+	_ InitMessageDigester = (*nethRpcClient)(nil)
+)
 
-var _ InitMessageDigester = (*NethRpcClient)(nil)
-
-func NewNethRpcClient() (*NethRpcClient, error) {
+func NewNethRpcClient() (*nethRpcClient, error) {
 	url, exists := os.LookupEnv("PR_NETH_RPC_CLIENT_URL")
 	if !exists {
 		log.Warn("Wasn't able to read PR_NETH_RPC_CLIENT_URL, using default url", "url", defaultUrl)
@@ -76,18 +81,18 @@ func NewNethRpcClient() (*NethRpcClient, error) {
 		return nil, fmt.Errorf("failed to create Neth RPC client: %w", err)
 	}
 
-	return &NethRpcClient{
+	return &nethRpcClient{
 		client: rpcClient,
 		url:    url,
 	}, nil
 }
 
-func (c *NethRpcClient) Close() {
+func (c *nethRpcClient) Close() {
 	c.client.Close()
 }
 
-func (c *NethRpcClient) DigestMessage(ctx context.Context, num arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata, msgForPrefetch *arbostypes.MessageWithMetadata) *execution.MessageResult {
-	params := MessageParams{
+func (c *nethRpcClient) DigestMessage(ctx context.Context, num arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata, msgForPrefetch *arbostypes.MessageWithMetadata) *execution.MessageResult {
+	params := messageParams{
 		Number:             num,
 		Message:            msg,
 		MessageForPrefetch: msgForPrefetch,
@@ -100,8 +105,7 @@ func (c *NethRpcClient) DigestMessage(ctx context.Context, num arbutil.MessageIn
 	)
 
 	var result execution.MessageResult
-	err := c.client.CallContext(ctx, &result, "DigestMessage", params)
-	if err != nil {
+	if err := c.client.CallContext(ctx, &result, "DigestMessage", params); err != nil {
 		log.Error("Failed to call DigestMessage", "error", err)
 		return nil
 	}
@@ -109,10 +113,10 @@ func (c *NethRpcClient) DigestMessage(ctx context.Context, num arbutil.MessageIn
 	return &result
 }
 
-func (c *NethRpcClient) DigestInitMessage(ctx context.Context, initialL1BaseFee *big.Int, serializedChainConfig []byte) *execution.MessageResult {
+func (c *nethRpcClient) DigestInitMessage(ctx context.Context, initialL1BaseFee *big.Int, serializedChainConfig []byte) *execution.MessageResult {
 	var result execution.MessageResult
 
-	params := InitializeMessageParams{
+	params := initializeMessageParams{
 		InitialL1BaseFee:      initialL1BaseFee,
 		SerializedChainConfig: serializedChainConfig,
 	}
@@ -129,8 +133,8 @@ func (c *NethRpcClient) DigestInitMessage(ctx context.Context, initialL1BaseFee 
 	return &result
 }
 
-func (c *NethRpcClient) SetFinalityData(ctx context.Context, safeFinalityData *arbutil.FinalityData, finalizedFinalityData *arbutil.FinalityData, validatedFinalityData *arbutil.FinalityData) error {
-	params := SetFinalityDataParams{
+func (c *nethRpcClient) SetFinalityData(ctx context.Context, safeFinalityData *arbutil.FinalityData, finalizedFinalityData *arbutil.FinalityData, validatedFinalityData *arbutil.FinalityData) error {
+	params := setFinalityDataParams{
 		SafeFinalityData:      convertToRpcFinalityData(safeFinalityData),
 		FinalizedFinalityData: convertToRpcFinalityData(finalizedFinalityData),
 		ValidatedFinalityData: convertToRpcFinalityData(validatedFinalityData),
@@ -143,20 +147,19 @@ func (c *NethRpcClient) SetFinalityData(ctx context.Context, safeFinalityData *a
 		"validatedFinalityData", validatedFinalityData)
 
 	var result interface{}
-	err := c.client.CallContext(ctx, &result, "SetFinalityData", params)
-	if err != nil {
+	if err := c.client.CallContext(ctx, &result, "SetFinalityData", params); err != nil {
 		log.Error("Failed to call SetFinalityData", "error", err)
-		return err
+		return fmt.Errorf("failed to call SetFinalityData: %w", err)
 	}
 
 	return nil
 }
 
-func convertToRpcFinalityData(data *arbutil.FinalityData) *RpcFinalityData {
+func convertToRpcFinalityData(data *arbutil.FinalityData) *rpcFinalityData {
 	if data == nil {
 		return nil
 	}
-	return &RpcFinalityData{
+	return &rpcFinalityData{
 		MsgIdx:    uint64(data.MsgIdx),
 		BlockHash: data.BlockHash,
 	}

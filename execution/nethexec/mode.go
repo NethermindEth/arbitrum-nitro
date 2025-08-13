@@ -6,7 +6,7 @@ import (
 )
 
 // ExecutionMode controls how the wrapper uses internal vs external EL
-type ExecutionMode int
+type ExecutionMode uint8
 
 const (
 	ModeInternalOnly ExecutionMode = iota // default
@@ -29,5 +29,3 @@ func GetExecutionModeFromEnv() ExecutionMode {
 		return ModeInternalOnly
 	}
 }
-
-// No legacy helpers required; use GetExecutionModeFromEnv() directly.

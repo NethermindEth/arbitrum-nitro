@@ -434,14 +434,12 @@ func mainImpl() int {
 
 	execMode := nethexec.GetExecutionModeFromEnv()
 
-	var rpcClient *nethexec.NethRpcClient
 	var initDigester nethexec.InitMessageDigester
 	switch execMode {
 	case nethexec.ModeInternalOnly:
-		initDigester = &nethexec.FakeRemoteExecutionRpcClient{}
+		initDigester = nethexec.NewFakeRemoteExecutionRpcClient()
 	case nethexec.ModeDualCompare, nethexec.ModeExternalOnly:
-		var newClientErr error
-		rpcClient, newClientErr = nethexec.NewNethRpcClient()
+		rpcClient, newClientErr := nethexec.NewNethRpcClient()
 		if newClientErr != nil {
 			log.Crit("failed to create real RPC client", "err", newClientErr)
 			return 1
