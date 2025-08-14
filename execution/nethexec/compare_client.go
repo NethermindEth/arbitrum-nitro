@@ -3,9 +3,6 @@ package nethexec
 import (
 	"context"
 	"fmt"
-	"math"
-	"os"
-	"strconv"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -32,20 +29,12 @@ var (
 type compareExecutionClient struct {
 	gethExecutionClient       *gethexec.ExecutionNode
 	nethermindExecutionClient *nethermindExecutionClient
-	maxMsgsToDigest           uint64
 }
 
 func NewCompareExecutionClient(gethExecutionClient *gethexec.ExecutionNode, nethermindExecutionClient *nethermindExecutionClient) *compareExecutionClient {
-	maxMsgsToDigest, err := strconv.ParseUint(os.Getenv("PR_MAX_MESSAGES_TO_DIGEST"), 10, 64)
-	if err != nil {
-		log.Warn("Wasn't able to read PR_MAX_MESSAGES_TO_DIGEST, setting to max value", "error", err)
-		maxMsgsToDigest = math.MaxUint64
-	}
-
 	return &compareExecutionClient{
 		gethExecutionClient:       gethExecutionClient,
 		nethermindExecutionClient: nethermindExecutionClient,
-		maxMsgsToDigest:           maxMsgsToDigest,
 	}
 }
 
