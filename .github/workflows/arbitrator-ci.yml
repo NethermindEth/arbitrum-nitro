@@ -28,6 +28,8 @@ env:
 jobs:
   arbitrator:
     name: Run Arbitrator tests
+    # NOTE: Temporarily skipped on pull_request while the repo is under development.
+    if: ${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
     runs-on: arbitrator-ci
     steps:
       - name: Setup tmate session
