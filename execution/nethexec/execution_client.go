@@ -59,7 +59,12 @@ func (p *nethermindExecutionClient) SetFinalityData(ctx context.Context, safeFin
 func (p *nethermindExecutionClient) Reorg(msgIdxOfFirstMsgToAdd arbutil.MessageIndex, newMessages []arbostypes.MessageWithMetadataAndBlockInfo, oldMessages []*arbostypes.MessageWithMetadata) containers.PromiseInterface[[]*execution.MessageResult] {
 	promise := containers.NewPromise[[]*execution.MessageResult](nil)
 	go func() {
-		promise.ProduceError(fmt.Errorf("Reorg not implemented"))
+		res, err := p.rpcClient.Reorg(context.Background(), msgIdxOfFirstMsgToAdd, newMessages, oldMessages)
+		if err != nil {
+			promise.ProduceError(err)
+			return
+		}
+		promise.Produce(res)
 	}()
 	return &promise
 }
@@ -67,7 +72,12 @@ func (p *nethermindExecutionClient) Reorg(msgIdxOfFirstMsgToAdd arbutil.MessageI
 func (p *nethermindExecutionClient) HeadMessageIndex() containers.PromiseInterface[arbutil.MessageIndex] {
 	promise := containers.NewPromise[arbutil.MessageIndex](nil)
 	go func() {
-		promise.ProduceError(fmt.Errorf("HeadMessageIndex not implemented"))
+		idx, err := p.rpcClient.HeadMessageNumber(context.Background())
+		if err != nil {
+			promise.ProduceError(err)
+			return
+		}
+		promise.Produce(idx)
 	}()
 	return &promise
 }
@@ -75,7 +85,12 @@ func (p *nethermindExecutionClient) HeadMessageIndex() containers.PromiseInterfa
 func (p *nethermindExecutionClient) ResultAtMessageIndex(msgIdx arbutil.MessageIndex) containers.PromiseInterface[*execution.MessageResult] {
 	promise := containers.NewPromise[*execution.MessageResult](nil)
 	go func() {
-		promise.ProduceError(fmt.Errorf("ResultAtMessageIndex not implemented"))
+		res, err := p.rpcClient.ResultAtPos(context.Background(), msgIdx)
+		if err != nil {
+			promise.ProduceError(err)
+			return
+		}
+		promise.Produce(res)
 	}()
 	return &promise
 }
@@ -83,7 +98,12 @@ func (p *nethermindExecutionClient) ResultAtMessageIndex(msgIdx arbutil.MessageI
 func (p *nethermindExecutionClient) MessageIndexToBlockNumber(messageNum arbutil.MessageIndex) containers.PromiseInterface[uint64] {
 	promise := containers.NewPromise[uint64](nil)
 	go func() {
-		promise.ProduceError(fmt.Errorf("MessageIndexToBlockNumber not implemented"))
+		num, err := p.rpcClient.MessageIndexToBlockNumber(context.Background(), messageNum)
+		if err != nil {
+			promise.ProduceError(err)
+			return
+		}
+		promise.Produce(num)
 	}()
 	return &promise
 }
@@ -91,7 +111,12 @@ func (p *nethermindExecutionClient) MessageIndexToBlockNumber(messageNum arbutil
 func (p *nethermindExecutionClient) BlockNumberToMessageIndex(blockNum uint64) containers.PromiseInterface[arbutil.MessageIndex] {
 	promise := containers.NewPromise[arbutil.MessageIndex](nil)
 	go func() {
-		promise.ProduceError(fmt.Errorf("BlockNumberToMessageIndex not implemented"))
+		idx, err := p.rpcClient.BlockNumberToMessageIndex(context.Background(), blockNum)
+		if err != nil {
+			promise.ProduceError(err)
+			return
+		}
+		promise.Produce(idx)
 	}()
 	return &promise
 }
@@ -99,7 +124,12 @@ func (p *nethermindExecutionClient) BlockNumberToMessageIndex(blockNum uint64) c
 func (p *nethermindExecutionClient) MarkFeedStart(to arbutil.MessageIndex) containers.PromiseInterface[struct{}] {
 	promise := containers.NewPromise[struct{}](nil)
 	go func() {
-		promise.ProduceError(fmt.Errorf("MarkFeedStart not implemented"))
+		err := p.rpcClient.MarkFeedStart(context.Background(), to)
+		if err != nil {
+			promise.ProduceError(err)
+			return
+		}
+		promise.Produce(struct{}{})
 	}()
 	return &promise
 }
@@ -133,7 +163,7 @@ func (p *nethermindExecutionClient) ForwardTo(url string) error {
 }
 
 func (p *nethermindExecutionClient) SequenceDelayedMessage(message *arbostypes.L1IncomingMessage, delayedSeqNum uint64) error {
-	return fmt.Errorf("SequenceDelayedMessage not implemented")
+	return p.rpcClient.SequenceDelayedMessage(context.Background(), message, delayedSeqNum)
 }
 
 func (p *nethermindExecutionClient) NextDelayedMessageNumber() (uint64, error) {

@@ -7,6 +7,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/google/go-cmp/cmp"
 	"github.com/offchainlabs/nitro/arbnode"
 	"github.com/offchainlabs/nitro/arbos/arbostypes"
 	"github.com/offchainlabs/nitro/arbutil"
@@ -38,63 +39,47 @@ func NewCompareExecutionClient(gethExecutionClient *gethexec.ExecutionNode, neth
 	}
 }
 
-func (w *compareExecutionClient) DigestMessage(num arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata, msgForPrefetch *arbostypes.MessageWithMetadata) containers.PromiseInterface[*execution.MessageResult] {
-	promise := containers.NewPromise[*execution.MessageResult](nil)
+// comparePromises awaits two promises, compares with go-cmp, and returns the
+// internal result. On mismatch, it logs cmp.Diff plus an optional hint and
+// returns an error. Hashes are rendered as hex for readability.
+func comparePromises[T any](op string,
+	internal containers.PromiseInterface[T],
+	external containers.PromiseInterface[T],
+) containers.PromiseInterface[T] {
+	promise := containers.NewPromise[T](nil)
 	go func() {
-		internalPromise := w.gethExecutionClient.DigestMessage(num, msg, msgForPrefetch)
-		externalPromise := w.nethermindExecutionClient.DigestMessage(num, msg, msgForPrefetch)
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 
-		intRes, intErr := internalPromise.Await(ctx)
-		extRes, extErr := externalPromise.Await(ctx)
+		intRes, intErr := internal.Await(ctx)
+		extRes, extErr := external.Await(ctx)
 
-		intOK := intErr == nil && intRes != nil
-		extOK := extErr == nil && extRes != nil
+		intOK := intErr == nil
+		extOK := extErr == nil
 
 		switch {
 		case !intOK && !extOK:
-			log.Error("Both execution digests failed", "num", num, "internalErr", intErr, "externalErr", extErr)
-			promise.ProduceError(fmt.Errorf("both DigestMessage calls failed: internal=%v external=%v", intErr, extErr))
+			log.Error("Both operations failed", "op", op, "internalErr", intErr, "externalErr", extErr)
+			promise.ProduceError(fmt.Errorf("%s failed: internal=%v external=%v", op, intErr, extErr))
 			return
 		case intOK && !extOK:
-			log.Warn("External digest failed; returning internal result", "num", num, "externalErr", extErr)
+			log.Warn("External operation failed; internal succeeded", "op", op, "externalErr", extErr)
 			promise.ProduceError(extErr)
 			return
 		case !intOK && extOK:
-			log.Warn("Internal digest failed; returning external result", "num", num, "internalErr", intErr)
+			log.Warn("Internal operation failed; external succeeded", "op", op, "internalErr", intErr)
 			promise.ProduceError(intErr)
 			return
 		default:
-			// both OK
-			if intRes.BlockHash != extRes.BlockHash || intRes.SendRoot != extRes.SendRoot {
-				details := fmt.Sprintf(
-					"  num: %d\n"+
-						"  BlockHash:\n"+
-						"    internal: %s\n"+
-						"    external: %s\n"+
-						"  SendRoot:\n"+
-						"    internal: %s\n"+
-						"    external: %s\n"+
-						"  Link: https://sepolia.arbiscan.io/block/%d",
-					num,
-					intRes.BlockHash.Hex(), extRes.BlockHash.Hex(),
-					intRes.SendRoot.Hex(), extRes.SendRoot.Hex(),
-					num,
-				)
-				log.Error("Execution mismatch between internal and external:\n" + details)
-				promise.ProduceError(
-					fmt.Errorf(
-						"execution mismatch between internal and external: "+
-							"num=%d, internalBlock=%s, externalBlock=%s, "+
-							"internalSendRoot=%s, externalSendRoot=%s",
-						num, intRes.BlockHash.Hex(), extRes.BlockHash.Hex(),
-						intRes.SendRoot.Hex(), extRes.SendRoot.Hex(),
-					),
-				)
+			opts := cmp.Options{
+				cmp.Transformer("HashHex", func(h common.Hash) string { return h.Hex() }),
+			}
+			if !cmp.Equal(intRes, extRes, opts) {
+				diff := cmp.Diff(intRes, extRes, opts)
+				log.Error("Execution mismatch between internal and external:\n" + diff)
+				promise.ProduceError(fmt.Errorf("%s mismatch", op))
 				return
 			}
-			log.Info("Execution match verified", "num", num, "block", intRes.BlockHash)
 			promise.Produce(intRes)
 			return
 		}
@@ -102,26 +87,49 @@ func (w *compareExecutionClient) DigestMessage(num arbutil.MessageIndex, msg *ar
 	return &promise
 }
 
+func (w *compareExecutionClient) DigestMessage(num arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata, msgForPrefetch *arbostypes.MessageWithMetadata) containers.PromiseInterface[*execution.MessageResult] {
+	start := time.Now()
+	log.Info("CompareExecutionClient: DigestMessage", "num", num)
+	internal := w.gethExecutionClient.DigestMessage(num, msg, msgForPrefetch)
+	external := w.nethermindExecutionClient.DigestMessage(num, msg, msgForPrefetch)
+
+	result := comparePromises(
+		"DigestMessage",
+		internal,
+		external,
+	)
+	log.Info("CompareExecutionClient: DigestMessage completed", "num", num, "elapsed", time.Since(start))
+	return result
+}
+
 func (w *compareExecutionClient) Reorg(count arbutil.MessageIndex, newMessages []arbostypes.MessageWithMetadataAndBlockInfo, oldMessages []*arbostypes.MessageWithMetadata) containers.PromiseInterface[[]*execution.MessageResult] {
 	start := time.Now()
 	log.Info("CompareExecutionClient: Reorg", "count", count, "newMessagesCount", len(newMessages), "oldMessagesCount", len(oldMessages))
-	result := w.gethExecutionClient.Reorg(count, newMessages, oldMessages)
+
+	internal := w.gethExecutionClient.Reorg(count, newMessages, oldMessages)
+	external := w.nethermindExecutionClient.Reorg(count, newMessages, oldMessages)
+
+	result := comparePromises("Reorg", internal, external)
 	log.Info("CompareExecutionClient: Reorg completed", "count", count, "elapsed", time.Since(start))
 	return result
 }
 
 func (w *compareExecutionClient) HeadMessageIndex() containers.PromiseInterface[arbutil.MessageIndex] {
-	// start := time.Now()
-	// log.Info("CompareExecutionClient: HeadMessageIndex")
-	result := w.gethExecutionClient.HeadMessageIndex()
-	// log.Info("CompareExecutionClient: HeadMessageIndex completed", "elapsed", time.Since(start))
+	start := time.Now()
+	log.Info("CompareExecutionClient: HeadMessageIndex")
+	internal := w.gethExecutionClient.HeadMessageIndex()
+	external := w.nethermindExecutionClient.HeadMessageIndex()
+	result := comparePromises("HeadMessageIndex", internal, external)
+	log.Info("CompareExecutionClient: HeadMessageIndex completed", "elapsed", time.Since(start))
 	return result
 }
 
 func (w *compareExecutionClient) ResultAtMessageIndex(pos arbutil.MessageIndex) containers.PromiseInterface[*execution.MessageResult] {
 	start := time.Now()
 	log.Info("CompareExecutionClient: ResultAtMessageIndex", "pos", pos)
-	result := w.gethExecutionClient.ResultAtMessageIndex(pos)
+	internal := w.gethExecutionClient.ResultAtMessageIndex(pos)
+	external := w.nethermindExecutionClient.ResultAtMessageIndex(pos)
+	result := comparePromises("ResultAtMessageIndex", internal, external)
 	log.Info("CompareExecutionClient: ResultAtMessageIndex completed", "pos", pos, "elapsed", time.Since(start))
 	return result
 }
@@ -129,7 +137,9 @@ func (w *compareExecutionClient) ResultAtMessageIndex(pos arbutil.MessageIndex) 
 func (w *compareExecutionClient) MessageIndexToBlockNumber(messageNum arbutil.MessageIndex) containers.PromiseInterface[uint64] {
 	start := time.Now()
 	log.Info("CompareExecutionClient: MessageIndexToBlockNumber", "messageNum", messageNum)
-	result := w.gethExecutionClient.MessageIndexToBlockNumber(messageNum)
+	internal := w.gethExecutionClient.MessageIndexToBlockNumber(messageNum)
+	external := w.nethermindExecutionClient.MessageIndexToBlockNumber(messageNum)
+	result := comparePromises("MessageIndexToBlockNumber", internal, external)
 	log.Info("CompareExecutionClient: MessageIndexToBlockNumber completed", "messageNum", messageNum, "elapsed", time.Since(start))
 	return result
 }
@@ -137,7 +147,9 @@ func (w *compareExecutionClient) MessageIndexToBlockNumber(messageNum arbutil.Me
 func (w *compareExecutionClient) BlockNumberToMessageIndex(blockNum uint64) containers.PromiseInterface[arbutil.MessageIndex] {
 	start := time.Now()
 	log.Info("CompareExecutionClient: BlockNumberToMessageIndex", "blockNum", blockNum)
-	result := w.gethExecutionClient.BlockNumberToMessageIndex(blockNum)
+	internal := w.gethExecutionClient.BlockNumberToMessageIndex(blockNum)
+	external := w.nethermindExecutionClient.BlockNumberToMessageIndex(blockNum)
+	result := comparePromises("BlockNumberToMessageIndex", internal, external)
 	log.Info("CompareExecutionClient: BlockNumberToMessageIndex completed", "blockNum", blockNum, "elapsed", time.Since(start))
 	return result
 }
@@ -148,33 +160,17 @@ func (w *compareExecutionClient) SetFinalityData(ctx context.Context, finalityDa
 		"finalizedFinalityData", finalizedFinalityData,
 		"validatedFinalityData", validatedFinalityData)
 
-	promise := containers.NewPromise[struct{}](nil)
-	go func() {
-		internalPromise := w.gethExecutionClient.SetFinalityData(ctx, finalityData, finalizedFinalityData, validatedFinalityData)
-		externalPromise := w.nethermindExecutionClient.SetFinalityData(ctx, finalityData, finalizedFinalityData, validatedFinalityData)
-		// nothing to compare other than success; Await internal to ensure completion
-		ctx2, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		defer cancel()
-		_, internalErr := internalPromise.Await(ctx2)
-		_, externalErr := externalPromise.Await(ctx2)
-		// Compare errors
-		if internalErr != externalErr {
-			promise.ProduceError(fmt.Errorf("SetFinalityData failed: internalErr=%v, externalErr=%v", internalErr, externalErr))
-			return
-		}
-		if internalErr != nil {
-			promise.ProduceError(internalErr)
-			return
-		}
-		promise.Produce(struct{}{})
-	}()
-	return &promise
+	internal := w.gethExecutionClient.SetFinalityData(ctx, finalityData, finalizedFinalityData, validatedFinalityData)
+	external := w.nethermindExecutionClient.SetFinalityData(ctx, finalityData, finalizedFinalityData, validatedFinalityData)
+	return comparePromises("SetFinalityData", internal, external)
 }
 
 func (w *compareExecutionClient) MarkFeedStart(to arbutil.MessageIndex) containers.PromiseInterface[struct{}] {
 	start := time.Now()
 	log.Info("CompareExecutionClient: MarkFeedStart", "to", to)
-	result := w.gethExecutionClient.MarkFeedStart(to)
+	internal := w.gethExecutionClient.MarkFeedStart(to)
+	external := w.nethermindExecutionClient.MarkFeedStart(to)
+	result := comparePromises("MarkFeedStart", internal, external)
 	log.Info("CompareExecutionClient: MarkFeedStart completed", "to", to, "elapsed", time.Since(start))
 	return result
 }
@@ -229,9 +225,24 @@ func (w *compareExecutionClient) ForwardTo(url string) error {
 func (w *compareExecutionClient) SequenceDelayedMessage(message *arbostypes.L1IncomingMessage, delayedSeqNum uint64) error {
 	start := time.Now()
 	log.Info("CompareExecutionClient: SequenceDelayedMessage", "delayedSeqNum", delayedSeqNum)
-	err := w.gethExecutionClient.SequenceDelayedMessage(message, delayedSeqNum)
-	log.Info("CompareExecutionClient: SequenceDelayedMessage completed", "delayedSeqNum", delayedSeqNum, "err", err, "elapsed", time.Since(start))
-	return err
+
+	internalErr := w.gethExecutionClient.SequenceDelayedMessage(message, delayedSeqNum)
+	externalErr := w.nethermindExecutionClient.SequenceDelayedMessage(message, delayedSeqNum)
+
+	if (internalErr == nil) != (externalErr == nil) || (internalErr != nil && externalErr != nil && internalErr.Error() != externalErr.Error()) {
+		log.Warn("SequenceDelayedMessage error mismatch", "internalErr", internalErr, "externalErr", externalErr)
+		// surface the discrepancy to caller
+		if internalErr != nil && externalErr == nil {
+			return internalErr
+		}
+		if internalErr == nil && externalErr != nil {
+			return externalErr
+		}
+		return fmt.Errorf("SequenceDelayedMessage mismatch: internalErr=%v externalErr=%v", internalErr, externalErr)
+	}
+
+	log.Info("CompareExecutionClient: SequenceDelayedMessage completed", "delayedSeqNum", delayedSeqNum, "err", internalErr, "elapsed", time.Since(start))
+	return internalErr
 }
 
 func (w *compareExecutionClient) NextDelayedMessageNumber() (uint64, error) {
