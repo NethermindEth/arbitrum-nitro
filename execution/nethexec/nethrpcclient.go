@@ -219,7 +219,7 @@ func (c *nethRpcClient) BlockNumberToMessageIndex(ctx context.Context, blockNum 
 
 func (c *nethRpcClient) MarkFeedStart(ctx context.Context, to arbutil.MessageIndex) error {
 	log.Info("Making JSON-RPC call to MarkFeedStart", "url", c.url, "to", to)
-	var result interface{}
+	var result string
 	if err := c.client.CallContext(ctx, &result, "MarkFeedStart", uint64(to)); err != nil {
 		log.Error("Failed to call MarkFeedStart", "error", err)
 		return fmt.Errorf("failed to call MarkFeedStart: %w", err)

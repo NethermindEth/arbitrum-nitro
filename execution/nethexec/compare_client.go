@@ -39,9 +39,6 @@ func NewCompareExecutionClient(gethExecutionClient *gethexec.ExecutionNode, neth
 	}
 }
 
-// comparePromises awaits two promises, compares with go-cmp, and returns the
-// internal result. On mismatch, it logs cmp.Diff plus an optional hint and
-// returns an error. Hashes are rendered as hex for readability.
 func comparePromises[T any](op string,
 	internal containers.PromiseInterface[T],
 	external containers.PromiseInterface[T],
@@ -54,37 +51,35 @@ func comparePromises[T any](op string,
 		intRes, intErr := internal.Await(ctx)
 		extRes, extErr := external.Await(ctx)
 
-		intOK := intErr == nil
-		extOK := extErr == nil
+		ok, diff := compare(intRes, intErr, extRes, extErr)
+		if !ok {
+			log.Error("Execution mismatch between internal and external:\n" + diff)
+			promise.ProduceError(fmt.Errorf("%s mismatch", op))
+			return
+		}
+		promise.Produce(intRes)
+	}()
+	return &promise
+}
 
-		switch {
-		case !intOK && !extOK:
-			log.Error("Both operations failed", "op", op, "internalErr", intErr, "externalErr", extErr)
-			promise.ProduceError(fmt.Errorf("%s failed: internal=%v external=%v", op, intErr, extErr))
-			return
-		case intOK && !extOK:
-			log.Warn("External operation failed; internal succeeded", "op", op, "externalErr", extErr)
-			promise.ProduceError(extErr)
-			return
-		case !intOK && extOK:
-			log.Warn("Internal operation failed; external succeeded", "op", op, "internalErr", intErr)
-			promise.ProduceError(intErr)
-			return
-		default:
+func compare[T any](intRes T, intErr error, extRes T, extErr error) (bool, string) {
+	switch {
+	case intErr != nil && extErr != nil:
+		return false, fmt.Sprintf("both operations failed: internal=%v external=%v", intErr, extErr)
+	case intErr != nil && extErr == nil:
+		return false, fmt.Sprintf("internal operation failed: %v", intErr)
+	case intErr == nil && extErr != nil:
+		return false, fmt.Sprintf("external operation failed: %v", extErr)
+	default:
+		if !cmp.Equal(intRes, extRes) {
 			opts := cmp.Options{
 				cmp.Transformer("HashHex", func(h common.Hash) string { return h.Hex() }),
 			}
-			if !cmp.Equal(intRes, extRes, opts) {
-				diff := cmp.Diff(intRes, extRes, opts)
-				log.Error("Execution mismatch between internal and external:\n" + diff)
-				promise.ProduceError(fmt.Errorf("%s mismatch", op))
-				return
-			}
-			promise.Produce(intRes)
-			return
+			diff := cmp.Diff(intRes, extRes, opts)
+			return false, diff
 		}
-	}()
-	return &promise
+		return true, ""
+	}
 }
 
 func (w *compareExecutionClient) DigestMessage(num arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata, msgForPrefetch *arbostypes.MessageWithMetadata) containers.PromiseInterface[*execution.MessageResult] {
@@ -229,16 +224,10 @@ func (w *compareExecutionClient) SequenceDelayedMessage(message *arbostypes.L1In
 	internalErr := w.gethExecutionClient.SequenceDelayedMessage(message, delayedSeqNum)
 	externalErr := w.nethermindExecutionClient.SequenceDelayedMessage(message, delayedSeqNum)
 
-	if (internalErr == nil) != (externalErr == nil) || (internalErr != nil && externalErr != nil && internalErr.Error() != externalErr.Error()) {
-		log.Warn("SequenceDelayedMessage error mismatch", "internalErr", internalErr, "externalErr", externalErr)
-		// surface the discrepancy to caller
-		if internalErr != nil && externalErr == nil {
-			return internalErr
-		}
-		if internalErr == nil && externalErr != nil {
-			return externalErr
-		}
-		return fmt.Errorf("SequenceDelayedMessage mismatch: internalErr=%v externalErr=%v", internalErr, externalErr)
+	ok, diff := compare(struct{}{}, internalErr, struct{}{}, externalErr)
+	if !ok {
+		log.Error("Execution mismatch between internal and external:\n" + diff)
+		return fmt.Errorf("%s mismatch", "SequenceDelayedMessage")
 	}
 
 	log.Info("CompareExecutionClient: SequenceDelayedMessage completed", "delayedSeqNum", delayedSeqNum, "err", internalErr, "elapsed", time.Since(start))
