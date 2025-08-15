@@ -8,8 +8,6 @@ on:
 jobs:
   test:
     name: Go Tests
-    # NOTE: Temporarily skipped on pull_request while the repo is under development.
-    if: ${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
     runs-on: arbitrator-ci
 
     # Creates a redis container for redis tests
