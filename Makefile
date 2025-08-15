@@ -309,15 +309,38 @@ docker:
 	docker build -t nitro-node --target nitro-node .
 	docker build -t nitro-node-dev --target nitro-node-dev .
 
-.PHONY: run-follower-compare
+.PHONY: run-follower-compare-local
 run-follower-compare: clean-follower
 	@echo "Starting Nitro sequencer follower..."
-	CGO_LDFLAGS=-Wl,-no_warn_duplicate_libraries PR_EXIT_AFTER_GENESIS=false PR_IGNORE_CALLSTACK=false PR_NETH_RPC_CLIENT_URL=http://localhost:20545 PR_OVERRIDE_FORWARDER_URL=ws://localhost:8548 PR_EXECUTION_MODE=compare target/bin/nitro --persistent.global-config /tmp/sequencer_follower --ipc.path /tmp/dev-test/geth.ipc --conf.file ../arbitrum-nitro-testnode/data/config/sequencer_follower_config_local.json --node.seq-coordinator.my-url ws://follower:8548 --http.port 7547 --ws.port 7548
+	CGO_LDFLAGS=-Wl,-no_warn_duplicate_libraries \
+	PR_EXIT_AFTER_GENESIS=false \
+	PR_IGNORE_CALLSTACK=false \
+	PR_NETH_RPC_CLIENT_URL=http://localhost:20545 \
+	PR_OVERRIDE_FORWARDER_URL=ws://localhost:8548 \
+	PR_EXECUTION_MODE=compare \
+	target/bin/nitro \
+		--persistent.global-config /tmp/sequencer_follower \
+		--ipc.path /tmp/dev-test/geth.ipc \
+		--conf.file ../arbitrum-nitro-testnode/data/config/sequencer_follower_config_local.json \
+		--node.seq-coordinator.my-url ws://follower:8548 \
+		--http.port 7547 \
+		--ws.port 7548
 
-.PHONY: run-follower-nethermind
-run-follower-nethermind: clean-follower
-	@echo "Starting Nitro sequencer follower..."
-	CGO_LDFLAGS=-Wl,-no_warn_duplicate_libraries PR_EXIT_AFTER_GENESIS=false PR_IGNORE_CALLSTACK=false PR_NETH_RPC_CLIENT_URL=http://localhost:20545 PR_OVERRIDE_FORWARDER_URL=ws://localhost:8548 PR_EXECUTION_MODE=nethermind target/bin/nitro --persistent.global-config /tmp/sequencer_follower --ipc.path /tmp/dev-test/geth.ipc --conf.file ../arbitrum-nitro-testnode/data/config/sequencer_follower_config_local.json --node.seq-coordinator.my-url ws://follower:8548 --http.port 7547 --ws.port 7548
+.PHONY: run-follower-compare-sepolia
+run-follower-compare-sepolia: clean-follower
+	@echo "Starting Nitro sequencer follower (Sepolia with Nethermind)..."
+	CGO_LDFLAGS=-Wl,-no_warn_duplicate_libraries \
+	PR_EXIT_AFTER_GENESIS=false \
+	PR_IGNORE_CALLSTACK=false \
+	PR_NETH_RPC_CLIENT_URL=http://localhost:20545 \
+	PR_EXECUTION_MODE=compare \
+	target/bin/nitro \
+		--persistent.global-config /tmp/sequencer_follower \
+		--parent-chain.connection.url=http://209.127.228.66:8545 \
+		--parent-chain.blob-client.beacon-url=http://209.127.228.66:4000 \
+		--chain.id=421614 \
+		--execution.forwarding-target null \
+		--execution.enable-prefetch-block=false
 
 .PHONY: clean-follower
 clean-follower:
@@ -327,7 +350,18 @@ clean-follower:
 .PHONY: run-sequencer
 run-sequencer: clean-sequencer
 	@echo "Starting Nitro sequencer..."
-	CGO_LDFLAGS=-Wl,-no_warn_duplicate_libraries PR_EXIT_AFTER_GENESIS=false PR_IGNORE_CALLSTACK=false target/bin/nitro --persistent.global-config /tmp/sequencer --ipc.path /tmp/dev-test/geth.ipc --conf.file ../arbitrum-nitro-testnode/data/config/sequencer_config_local.json --node.feed.output.enable --node.feed.output.port 9642 --http.api net,web3,eth,txpool,debug,timeboost,auctioneer --http.port 8547 --ws.port 8548
+	CGO_LDFLAGS=-Wl,-no_warn_duplicate_libraries \
+	PR_EXIT_AFTER_GENESIS=false \
+	PR_IGNORE_CALLSTACK=false \
+	target/bin/nitro \
+		--persistent.global-config /tmp/sequencer \
+		--ipc.path /tmp/dev-test/geth.ipc \
+		--conf.file ../arbitrum-nitro-testnode/data/config/sequencer_config_local.json \
+		--node.feed.output.enable \
+		--node.feed.output.port 9642 \
+		--http.api net,web3,eth,txpool,debug,timeboost,auctioneer \
+		--http.port 8547 \
+		--ws.port 8548
 
 .PHONY: clean-sequencer
 clean-sequencer:

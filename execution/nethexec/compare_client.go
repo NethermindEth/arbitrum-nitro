@@ -59,38 +59,47 @@ func (w *compareExecutionClient) DigestMessage(num arbutil.MessageIndex, msg *ar
 			return
 		case intOK && !extOK:
 			log.Warn("External digest failed; returning internal result", "num", num, "externalErr", extErr)
-			promise.Produce(intRes)
+			promise.ProduceError(extErr)
 			return
 		case !intOK && extOK:
 			log.Warn("Internal digest failed; returning external result", "num", num, "internalErr", intErr)
-			promise.Produce(extRes)
+			promise.ProduceError(intErr)
 			return
 		default:
 			// both OK
 			if intRes.BlockHash != extRes.BlockHash || intRes.SendRoot != extRes.SendRoot {
-				details := fmt.Sprintf("\n  num: %d\n  BlockHash:\n    internal: %s\n    external: %s\n  SendRoot:\n    internal: %s\n    external: %s",
+				details := fmt.Sprintf(
+					"  num: %d\n"+
+						"  BlockHash:\n"+
+						"    internal: %s\n"+
+						"    external: %s\n"+
+						"  SendRoot:\n"+
+						"    internal: %s\n"+
+						"    external: %s\n"+
+						"  Link: https://sepolia.arbiscan.io/block/%d",
 					num,
 					intRes.BlockHash.Hex(), extRes.BlockHash.Hex(),
 					intRes.SendRoot.Hex(), extRes.SendRoot.Hex(),
+					num,
 				)
-				log.Error(
-					"Execution mismatch between internal and external",
-					"num", num,
-					"internalBlock", intRes.BlockHash,
-					"externalBlock", extRes.BlockHash,
-					"internalSendRoot", intRes.SendRoot,
-					"externalSendRoot", extRes.SendRoot,
-					"details", details,
+				log.Error("Execution mismatch between internal and external:\n" + details)
+				promise.ProduceError(
+					fmt.Errorf(
+						"execution mismatch between internal and external: "+
+							"num=%d, internalBlock=%s, externalBlock=%s, "+
+							"internalSendRoot=%s, externalSendRoot=%s",
+						num, intRes.BlockHash.Hex(), extRes.BlockHash.Hex(),
+						intRes.SendRoot.Hex(), extRes.SendRoot.Hex(),
+					),
 				)
-			} else {
-				log.Info("Execution match verified", "num", num, "block", intRes.BlockHash)
+				return
 			}
+			log.Info("Execution match verified", "num", num, "block", intRes.BlockHash)
 			promise.Produce(intRes)
 			return
 		}
 	}()
 	return &promise
-
 }
 
 func (w *compareExecutionClient) Reorg(count arbutil.MessageIndex, newMessages []arbostypes.MessageWithMetadataAndBlockInfo, oldMessages []*arbostypes.MessageWithMetadata) containers.PromiseInterface[[]*execution.MessageResult] {

@@ -1327,7 +1327,8 @@ func (s *TransactionStreamer) ExecuteNextMsg(ctx context.Context) bool {
 	}
 	defer s.reorgMutex.RUnlock()
 
-	prevHeadMsgIdx := s.prevHeadMsgIdx
+	// NOTE: Explanation below
+	// prevHeadMsgIdx := s.prevHeadMsgIdx
 	consensusHeadMsgIdx, err := s.GetHeadMessageIndex()
 	if errors.Is(err, ErrNoMessages) {
 		return false
@@ -1364,11 +1365,14 @@ func (s *TransactionStreamer) ExecuteNextMsg(ctx context.Context) bool {
 	}
 	msgResult, err := s.exec.DigestMessage(msgIdxToExecute, &msgAndBlockInfo.MessageWithMeta, msgForPrefetch).Await(ctx)
 	if err != nil {
-		logger := log.Warn
-		if (prevHeadMsgIdx == nil) || (*prevHeadMsgIdx < consensusHeadMsgIdx) {
-			logger = log.Debug
-		}
-		logger("ExecuteNextMsg failed to send message to execEngine", "err", err, "msgIdxToExecute", msgIdxToExecute)
+		// NOTE: This is a temporary change to stop execution if DigestMessage fails.
+
+		// logger := log.Warn
+		// if (prevHeadMsgIdx == nil) || (*prevHeadMsgIdx < consensusHeadMsgIdx) {
+		//     logger = log.Debug
+		// }
+		// logger("ExecuteNextMsg failed to send message to execEngine", "err", err, "msgIdxToExecute", msgIdxToExecute)
+		log.Crit("Execution engine DigestMessage returned error", "err", err, "msgIdxToExecute", msgIdxToExecute)
 		return false
 	}
 
