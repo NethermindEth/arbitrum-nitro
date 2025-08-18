@@ -51,35 +51,33 @@ func comparePromises[T any](op string,
 		intRes, intErr := internal.Await(ctx)
 		extRes, extErr := external.Await(ctx)
 
-		ok, diff := compare(intRes, intErr, extRes, extErr)
-		if !ok {
-			log.Error("Execution mismatch between internal and external:\n" + diff)
-			promise.ProduceError(fmt.Errorf("%s mismatch", op))
-			return
+		if err := compare(op, intRes, intErr, extRes, extErr); err != nil {
+			promise.ProduceError(err)
+		} else {
+			promise.Produce(intRes)
 		}
-		promise.Produce(intRes)
 	}()
 	return &promise
 }
 
-func compare[T any](intRes T, intErr error, extRes T, extErr error) (bool, string) {
+func compare[T any](op string, intRes T, intErr error, extRes T, extErr error) error {
 	switch {
 	case intErr != nil && extErr != nil:
-		return false, fmt.Sprintf("both operations failed: internal=%v external=%v", intErr, extErr)
+		return fmt.Errorf("both operations failed: internal=%v external=%v", intErr, extErr)
 	case intErr != nil && extErr == nil:
-		return false, fmt.Sprintf("internal operation failed: %v", intErr)
+		panic(fmt.Sprintf("internal operation failed: %v", intErr))
 	case intErr == nil && extErr != nil:
-		return false, fmt.Sprintf("external operation failed: %v", extErr)
+		panic(fmt.Sprintf("external operation failed: %v", extErr))
 	default:
 		if !cmp.Equal(intRes, extRes) {
 			opts := cmp.Options{
 				cmp.Transformer("HashHex", func(h common.Hash) string { return h.Hex() }),
 			}
 			diff := cmp.Diff(intRes, extRes, opts)
-			return false, diff
+			panic(fmt.Sprintf("Execution mismatch between internal and external:\n%s\n%s", op, diff))
 		}
-		return true, ""
 	}
+	return nil
 }
 
 func (w *compareExecutionClient) DigestMessage(num arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata, msgForPrefetch *arbostypes.MessageWithMetadata) containers.PromiseInterface[*execution.MessageResult] {
@@ -224,11 +222,7 @@ func (w *compareExecutionClient) SequenceDelayedMessage(message *arbostypes.L1In
 	internalErr := w.gethExecutionClient.SequenceDelayedMessage(message, delayedSeqNum)
 	externalErr := w.nethermindExecutionClient.SequenceDelayedMessage(message, delayedSeqNum)
 
-	ok, diff := compare(struct{}{}, internalErr, struct{}{}, externalErr)
-	if !ok {
-		log.Error("Execution mismatch between internal and external:\n" + diff)
-		return fmt.Errorf("%s mismatch", "SequenceDelayedMessage")
-	}
+	compare("SequenceDelayedMessage", struct{}{}, internalErr, struct{}{}, externalErr)
 
 	log.Info("CompareExecutionClient: SequenceDelayedMessage completed", "delayedSeqNum", delayedSeqNum, "err", internalErr, "elapsed", time.Since(start))
 	return internalErr
