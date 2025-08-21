@@ -336,8 +336,8 @@ run-follower-compare-sepolia: clean-follower
 	PR_EXECUTION_MODE=compare \
 	target/bin/nitro \
 		--persistent.global-config /tmp/sequencer_follower \
-		--parent-chain.connection.url=http://209.127.228.66:8545 \
-		--parent-chain.blob-client.beacon-url=http://209.127.228.66:4000 \
+		--parent-chain.connection.url=http://209.127.228.66/rpc/6ekWpL9BXR0aLXrd \
+        --parent-chain.blob-client.beacon-url=http://209.127.228.66/consensus/6ekWpL9BXR0aLXrd \
 		--chain.id=421614 \
 		--execution.forwarding-target null \
 		--execution.enable-prefetch-block=false
