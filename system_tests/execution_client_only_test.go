@@ -22,7 +22,11 @@ func TestExecutionClientOnly(t *testing.T) {
 	seqTestClient := builder.L2
 
 	replicaExecutionClientOnlyConfig := arbnode.ConfigDefaultL1NonSequencerTest()
-	replicaExecutionClientOnlyTestClient, replicaExecutionClientOnlyCleanup := builder.Build2ndNode(t, &SecondNodeParams{nodeConfig: replicaExecutionClientOnlyConfig, useExecutionClientOnly: true})
+	replicaExecutionClientOnlyTestClient, replicaExecutionClientOnlyCleanup := builder.Build2ndNode(t, &SecondNodeParams{
+		nodeConfig:             replicaExecutionClientOnlyConfig,
+		useExecutionClientOnly: true,
+		useExternalExecution:   true,
+	})
 	defer replicaExecutionClientOnlyCleanup()
 
 	builder.L2Info.GenerateAccount("User2")

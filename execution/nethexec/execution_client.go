@@ -143,7 +143,8 @@ func (p *nethermindExecutionClient) Maintenance() containers.PromiseInterface[st
 }
 
 func (p *nethermindExecutionClient) Start(ctx context.Context) error {
-	return fmt.Errorf("Start not implemented")
+	//return fmt.Errorf("Start not implemented")
+	return nil
 }
 
 func (p *nethermindExecutionClient) StopAndWait() {
@@ -200,5 +201,6 @@ func (w *nethermindExecutionClient) SetConsensusClient(consensus execution.FullC
 }
 
 func (w *nethermindExecutionClient) Initialize(ctx context.Context) error {
-	return fmt.Errorf("Initialize not implemented")
+	//return fmt.Errorf("Initialize not implemented")
+	return nil
 }

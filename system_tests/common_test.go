@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/offchainlabs/nitro/execution/nethexec"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/ethereum/go-ethereum"
@@ -105,6 +106,7 @@ type SecondNodeParams struct {
 	addresses              *chaininfo.RollupAddresses
 	wasmCacheTag           uint32
 	useExecutionClientOnly bool
+	useExternalExecution   bool
 }
 
 type TestClient struct {
@@ -954,7 +956,7 @@ func build2ndNode(
 
 	testClient := NewTestClient(ctx)
 	testClient.Client, testClient.ConsensusNode =
-		Create2ndNodeWithConfig(t, ctx, firstNodeTestClient.ConsensusNode, parentChainTestClient.Stack, parentChainInfo, params.initData, params.nodeConfig, params.execConfig, params.stackConfig, valnodeConfig, params.addresses, initMessage, params.wasmCacheTag, params.useExecutionClientOnly)
+		Create2ndNodeWithConfig(t, ctx, firstNodeTestClient.ConsensusNode, parentChainTestClient.Stack, parentChainInfo, params.initData, params.nodeConfig, params.execConfig, params.stackConfig, valnodeConfig, params.addresses, initMessage, params.wasmCacheTag, params.useExecutionClientOnly, params.useExternalExecution)
 	testClient.ExecNode = getExecNode(t, testClient.ConsensusNode)
 	testClient.cleanup = func() { testClient.ConsensusNode.StopAndWait() }
 	return testClient, func() { testClient.cleanup() }
@@ -1733,6 +1735,7 @@ func Create2ndNodeWithConfig(
 	initMessage *arbostypes.ParsedInitMessage,
 	wasmCacheTag uint32,
 	useExecutionClientOnly bool,
+	useExternalExecution bool,
 ) (*ethclient.Client, *arbnode.Node) {
 	if nodeConfig == nil {
 		nodeConfig = arbnode.ConfigDefaultL1NonSequencerTest()
@@ -1782,7 +1785,14 @@ func Create2ndNodeWithConfig(
 
 	Require(t, nodeConfig.Validate())
 	configFetcher := func() *gethexec.Config { return execConfig }
-	currentExec, err := gethexec.CreateExecutionNode(ctx, chainStack, chainDb, blockchain, parentChainClient, configFetcher, 0)
+
+	var currentExec nethexec.FullExecutionClient
+	if useExternalExecution {
+		currentExec, err = nethexec.NewNethermindExecutionClient()
+	} else {
+		currentExec, err = gethexec.CreateExecutionNode(ctx, chainStack, chainDb, blockchain, parentChainClient, configFetcher, 0)
+	}
+
 	Require(t, err)
 
 	var currentNode *arbnode.Node
