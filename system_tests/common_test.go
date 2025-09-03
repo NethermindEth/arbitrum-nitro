@@ -957,7 +957,7 @@ func build2ndNode(
 	testClient := NewTestClient(ctx)
 	testClient.Client, testClient.ConsensusNode =
 		Create2ndNodeWithConfig(t, ctx, firstNodeTestClient.ConsensusNode, parentChainTestClient.Stack, parentChainInfo, params.initData, params.nodeConfig, params.execConfig, params.stackConfig, valnodeConfig, params.addresses, initMessage, params.wasmCacheTag, params.useExecutionClientOnly, params.useExternalExecution)
-	testClient.ExecNode = getExecNode(t, testClient.ConsensusNode)
+	//testClient.ExecNode = getExecNode(t, testClient.ConsensusNode)
 	testClient.cleanup = func() { testClient.ConsensusNode.StopAndWait() }
 	return testClient, func() { testClient.cleanup() }
 }
@@ -1778,6 +1778,7 @@ func Create2ndNodeWithConfig(
 		tracer, err = tracers.LiveDirectory.New(execConfig.VmTrace.TracerName, json.RawMessage(execConfig.VmTrace.JSONConfig))
 		Require(t, err)
 	}
+
 	blockchain, err := gethexec.WriteOrTestBlockChain(chainDb, coreCacheConfig, initReader, chainConfig, nil, tracer, initMessage, execConfig.TxLookupLimit, 0)
 	Require(t, err)
 
@@ -1788,6 +1789,21 @@ func Create2ndNodeWithConfig(
 
 	var currentExec nethexec.FullExecutionClient
 	if useExternalExecution {
+		rpcClient, newClientErr := nethexec.NewNethRpcClient()
+		if newClientErr != nil {
+			log.Crit("failed to create real RPC client", "err", newClientErr)
+		}
+
+		serializedChainConfig, _ := json.Marshal(chainConfig)
+		parsedInitMessage := &arbostypes.ParsedInitMessage{
+			ChainId:               chainConfig.ChainID,
+			InitialL1BaseFee:      arbostypes.DefaultInitialL1BaseFee,
+			ChainConfig:           chainConfig,
+			SerializedChainConfig: serializedChainConfig,
+		}
+
+		_ = rpcClient.DigestInitMessage(ctx, parsedInitMessage.InitialL1BaseFee, parsedInitMessage.SerializedChainConfig)
+
 		currentExec, err = nethexec.NewNethermindExecutionClient()
 	} else {
 		currentExec, err = gethexec.CreateExecutionNode(ctx, chainStack, chainDb, blockchain, parentChainClient, configFetcher, 0)
