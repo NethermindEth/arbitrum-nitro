@@ -118,6 +118,23 @@ func ParseStrategy(strategy string) (StakerStrategy, error) {
 	}
 }
 
+func (s StakerStrategy) ToString() string {
+	switch s {
+	case WatchtowerStrategy:
+		return "watchtower"
+	case DefensiveStrategy:
+		return "defensive"
+	case StakeLatestStrategy:
+		return "stakelatest"
+	case ResolveNodesStrategy:
+		return "resolvenodes"
+	case MakeNodesStrategy:
+		return "makenodes"
+	default:
+		return "Unknown"
+	}
+}
+
 func (c *L1ValidatorConfig) ValidatorRequired() bool {
 	if !c.Enable {
 		return false
@@ -376,6 +393,9 @@ func (s *Staker) Initialize(ctx context.Context) error {
 		// #nosec G115
 		stakerLatestStakedNodeGauge.Update(int64(latestStaked))
 		if latestStaked == 0 {
+			if s.config().EnableFastConfirmation {
+				return errors.New("staker: fast confirmation enabled at genesis")
+			}
 			return nil
 		}
 

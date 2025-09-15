@@ -43,6 +43,9 @@ type L1PricingState struct {
 	perBatchGasCost      storage.StorageBackedInt64   // introduced in ArbOS version 3
 	amortizedCostCapBips storage.StorageBackedUint64  // in basis points; introduced in ArbOS version 3
 	l1FeesAvailable      storage.StorageBackedBigUint
+	gasFloorPerToken     storage.StorageBackedUint64 // introduced in arbos version 50, default 0
+
+	ArbosVersion uint64
 }
 
 var (
@@ -67,6 +70,7 @@ const (
 	perBatchGasCostOffset
 	amortizedCostCapBipsOffset
 	l1FeesAvailableOffset
+	gasFloorPerTokenOffset
 )
 
 const (
@@ -113,22 +117,24 @@ func InitializeL1PricingState(sto *storage.Storage, initialRewardsRecipient comm
 	return nil
 }
 
-func OpenL1PricingState(sto *storage.Storage) *L1PricingState {
+func OpenL1PricingState(sto *storage.Storage, arbosVersion uint64) *L1PricingState {
 	return &L1PricingState{
-		sto,
-		OpenBatchPostersTable(sto.OpenCachedSubStorage(BatchPosterTableKey)),
-		sto.OpenStorageBackedAddress(payRewardsToOffset),
-		sto.OpenStorageBackedBigUint(equilibrationUnitsOffset),
-		sto.OpenStorageBackedUint64(inertiaOffset),
-		sto.OpenStorageBackedUint64(perUnitRewardOffset),
-		sto.OpenStorageBackedUint64(lastUpdateTimeOffset),
-		sto.OpenStorageBackedBigInt(fundsDueForRewardsOffset),
-		sto.OpenStorageBackedUint64(unitsSinceOffset),
-		sto.OpenStorageBackedBigUint(pricePerUnitOffset),
-		sto.OpenStorageBackedBigInt(lastSurplusOffset),
-		sto.OpenStorageBackedInt64(perBatchGasCostOffset),
-		sto.OpenStorageBackedUint64(amortizedCostCapBipsOffset),
-		sto.OpenStorageBackedBigUint(l1FeesAvailableOffset),
+		storage:              sto,
+		batchPosterTable:     OpenBatchPostersTable(sto.OpenCachedSubStorage(BatchPosterTableKey)),
+		payRewardsTo:         sto.OpenStorageBackedAddress(payRewardsToOffset),
+		equilibrationUnits:   sto.OpenStorageBackedBigUint(equilibrationUnitsOffset),
+		inertia:              sto.OpenStorageBackedUint64(inertiaOffset),
+		perUnitReward:        sto.OpenStorageBackedUint64(perUnitRewardOffset),
+		lastUpdateTime:       sto.OpenStorageBackedUint64(lastUpdateTimeOffset),
+		fundsDueForRewards:   sto.OpenStorageBackedBigInt(fundsDueForRewardsOffset),
+		unitsSinceUpdate:     sto.OpenStorageBackedUint64(unitsSinceOffset),
+		pricePerUnit:         sto.OpenStorageBackedBigUint(pricePerUnitOffset),
+		lastSurplus:          sto.OpenStorageBackedBigInt(lastSurplusOffset),
+		perBatchGasCost:      sto.OpenStorageBackedInt64(perBatchGasCostOffset),
+		amortizedCostCapBips: sto.OpenStorageBackedUint64(amortizedCostCapBipsOffset),
+		l1FeesAvailable:      sto.OpenStorageBackedBigUint(l1FeesAvailableOffset),
+		gasFloorPerToken:     sto.OpenStorageBackedUint64(gasFloorPerTokenOffset),
+		ArbosVersion:         arbosVersion,
 	}
 }
 
@@ -235,6 +241,20 @@ func (ps *L1PricingState) PricePerUnit() (*big.Int, error) {
 
 func (ps *L1PricingState) SetPricePerUnit(price *big.Int) error {
 	return ps.pricePerUnit.SetChecked(price)
+}
+
+func (ps *L1PricingState) SetParentGasFloorPerToken(floor uint64) error {
+	if ps.ArbosVersion < params.ArbosVersion_50 {
+		return fmt.Errorf("not supported")
+	}
+	return ps.gasFloorPerToken.Set(floor)
+}
+
+func (ps *L1PricingState) ParentGasFloorPerToken() (uint64, error) {
+	if ps.ArbosVersion < params.ArbosVersion_50 {
+		return 0, nil
+	}
+	return ps.gasFloorPerToken.Get()
 }
 
 func (ps *L1PricingState) PerBatchGasCost() (int64, error) {
@@ -511,7 +531,7 @@ func (ps *L1PricingState) getPosterUnitsWithoutCache(tx *types.Transaction, post
 	if err != nil {
 		panic(fmt.Sprintf("failed to compress tx: %v", err))
 	}
-	return l1Bytes * params.TxDataNonZeroGasEIP2028
+	return am.SaturatingUMul(params.TxDataNonZeroGasEIP2028, l1Bytes)
 }
 
 // GetPosterInfo returns the poster cost and the calldata units for a transaction
@@ -534,7 +554,8 @@ func (ps *L1PricingState) GetPosterInfo(tx *types.Transaction, poster common.Add
 }
 
 // We don't have the full tx in gas estimation, so we assume it might be a bit bigger in practice.
-const estimationPaddingUnits = 16 * params.TxDataNonZeroGasEIP2028
+var estimationPaddingUnits uint64 = 16 * params.TxDataNonZeroGasEIP2028
+
 const estimationPaddingBasisPoints = 100
 
 var randomNonce = binary.BigEndian.Uint64(crypto.Keccak256([]byte("Nonce"))[:8])
@@ -562,7 +583,7 @@ func makeFakeTxForMessage(message *core.Message) *types.Transaction {
 	}
 	// During gas estimation, we don't want the gas limit variability to change the L1 cost.
 	gas := message.GasLimit
-	if gas == 0 || message.TxRunMode == core.MessageGasEstimationMode {
+	if gas == 0 || message.TxRunContext.IsGasEstimation() {
 		gas = RandomGas
 	}
 	return types.NewTx(&types.DynamicFeeTx{
