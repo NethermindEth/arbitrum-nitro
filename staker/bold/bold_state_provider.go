@@ -13,14 +13,13 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 
-	protocol "github.com/offchainlabs/bold/chain-abstraction"
-	"github.com/offchainlabs/bold/containers/option"
-	l2stateprovider "github.com/offchainlabs/bold/layer2-state-provider"
-	"github.com/offchainlabs/bold/state-commitments/history"
 	"github.com/offchainlabs/nitro/arbutil"
+	protocol "github.com/offchainlabs/nitro/bold/chain-abstraction"
+	"github.com/offchainlabs/nitro/bold/containers/option"
+	l2stateprovider "github.com/offchainlabs/nitro/bold/layer2-state-provider"
+	"github.com/offchainlabs/nitro/bold/state-commitments/history"
 	"github.com/offchainlabs/nitro/execution"
 	"github.com/offchainlabs/nitro/staker"
 	challengecache "github.com/offchainlabs/nitro/staker/challenge-cache"
@@ -373,7 +372,7 @@ func (s *BOLDStateProvider) CollectMachineHashes(
 	if err != nil {
 		return nil, err
 	}
-	input, err := entry.ToInput([]ethdb.WasmTarget{rawdb.TargetWavm})
+	input, err := entry.ToInput([]rawdb.WasmTarget{rawdb.TargetWavm})
 	if err != nil {
 		return nil, err
 	}
@@ -491,7 +490,7 @@ func (s *BOLDStateProvider) CollectProof(
 	if err != nil {
 		return nil, err
 	}
-	input, err := entry.ToInput([]ethdb.WasmTarget{rawdb.TargetWavm})
+	input, err := entry.ToInput([]rawdb.WasmTarget{rawdb.TargetWavm})
 	if err != nil {
 		return nil, err
 	}

@@ -30,26 +30,27 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
-	protocol "github.com/offchainlabs/bold/chain-abstraction"
-	solimpl "github.com/offchainlabs/bold/chain-abstraction/sol-implementation"
-	challengemanager "github.com/offchainlabs/bold/challenge-manager"
-	modes "github.com/offchainlabs/bold/challenge-manager/types"
-	l2stateprovider "github.com/offchainlabs/bold/layer2-state-provider"
-	"github.com/offchainlabs/bold/solgen/go/bridgegen"
-	"github.com/offchainlabs/bold/solgen/go/challengeV2gen"
-	"github.com/offchainlabs/bold/solgen/go/mocksgen"
-	"github.com/offchainlabs/bold/solgen/go/rollupgen"
-	challengetesting "github.com/offchainlabs/bold/testing"
-	"github.com/offchainlabs/bold/testing/setup"
-	butil "github.com/offchainlabs/bold/util"
+
 	"github.com/offchainlabs/nitro/arbcompress"
 	"github.com/offchainlabs/nitro/arbnode"
 	"github.com/offchainlabs/nitro/arbnode/dataposter/storage"
 	"github.com/offchainlabs/nitro/arbos"
 	"github.com/offchainlabs/nitro/arbos/l2pricing"
 	"github.com/offchainlabs/nitro/arbstate"
+	protocol "github.com/offchainlabs/nitro/bold/chain-abstraction"
+	solimpl "github.com/offchainlabs/nitro/bold/chain-abstraction/sol-implementation"
+	challengemanager "github.com/offchainlabs/nitro/bold/challenge-manager"
+	modes "github.com/offchainlabs/nitro/bold/challenge-manager/types"
+	l2stateprovider "github.com/offchainlabs/nitro/bold/layer2-state-provider"
+	challengetesting "github.com/offchainlabs/nitro/bold/testing"
+	"github.com/offchainlabs/nitro/bold/testing/setup"
+	butil "github.com/offchainlabs/nitro/bold/util"
 	"github.com/offchainlabs/nitro/cmd/chaininfo"
 	"github.com/offchainlabs/nitro/execution/gethexec"
+	"github.com/offchainlabs/nitro/solgen/go/bridgegen"
+	"github.com/offchainlabs/nitro/solgen/go/challengeV2gen"
+	"github.com/offchainlabs/nitro/solgen/go/mocksgen"
+	"github.com/offchainlabs/nitro/solgen/go/rollupgen"
 	"github.com/offchainlabs/nitro/staker"
 	"github.com/offchainlabs/nitro/staker/bold"
 	"github.com/offchainlabs/nitro/statetransfer"
@@ -605,9 +606,8 @@ func createTestNodeOnL1ForBoldProtocol(
 
 	execConfig := ExecConfigDefaultNonSequencerTest(t, rawdb.HashScheme)
 	Require(t, execConfig.Validate())
-	useWasmCache := uint32(1)
 	initMessage := getInitMessage(ctx, t, l1client, addresses)
-	_, l2stack, l2chainDb, l2arbDb, l2blockchain = createNonL1BlockChainWithStackConfig(t, l2info, "", chainConfig, nil, initMessage, nil, execConfig, useWasmCache, true)
+	_, l2stack, l2chainDb, l2arbDb, l2blockchain = createNonL1BlockChainWithStackConfig(t, l2info, "", chainConfig, nil, initMessage, nil, execConfig)
 	var sequencerTxOptsPtr *bind.TransactOpts
 	var dataSigner signature.DataSignerFunc
 	if isSequencer {
@@ -623,11 +623,11 @@ func createTestNodeOnL1ForBoldProtocol(
 
 	AddValNodeIfNeeded(t, ctx, nodeConfig, true, "", "")
 
+	parentChainId, err := l1client.ChainID(ctx)
 	execConfigFetcher := func() *gethexec.Config { return execConfig }
-	execNode, err := gethexec.CreateExecutionNode(ctx, l2stack, l2chainDb, l2blockchain, l1client, execConfigFetcher, 0)
+	execNode, err := gethexec.CreateExecutionNode(ctx, l2stack, l2chainDb, l2blockchain, l1client, execConfigFetcher, parentChainId, 0)
 	Require(t, err)
 
-	parentChainId, err := l1client.ChainID(ctx)
 	Require(t, err)
 	locator, err := server_common.NewMachineLocator("")
 	Require(t, err)
@@ -832,14 +832,14 @@ func create2ndNodeWithConfigForBoldProtocol(
 
 	execConfig := ExecConfigDefaultNonSequencerTest(t, rawdb.HashScheme)
 	Require(t, execConfig.Validate())
-	coreCacheConfig := gethexec.DefaultCacheConfigFor(l2stack, &execConfig.Caching)
-	l2blockchain, err := gethexec.WriteOrTestBlockChain(l2chainDb, coreCacheConfig, initReader, chainConfig, nil, nil, initMessage, execConfig.TxLookupLimit, 0)
+	coreCacheConfig := gethexec.DefaultCacheConfigFor(&execConfig.Caching)
+	l2blockchain, err := gethexec.WriteOrTestBlockChain(l2chainDb, coreCacheConfig, initReader, chainConfig, nil, nil, initMessage, &execConfig.TxIndexer, 0)
 	Require(t, err)
 
 	execConfigFetcher := func() *gethexec.Config { return execConfig }
-	execNode, err := gethexec.CreateExecutionNode(ctx, l2stack, l2chainDb, l2blockchain, l1client, execConfigFetcher, 0)
-	Require(t, err)
 	l1ChainId, err := l1client.ChainID(ctx)
+	Require(t, err)
+	execNode, err := gethexec.CreateExecutionNode(ctx, l2stack, l2chainDb, l2blockchain, l1client, execConfigFetcher, l1ChainId, 0)
 	Require(t, err)
 	locator, err := server_common.NewMachineLocator("")
 	Require(t, err)

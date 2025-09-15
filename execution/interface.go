@@ -5,12 +5,17 @@ import (
 	"errors"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
 
 	"github.com/offchainlabs/nitro/arbos/arbostypes"
 	"github.com/offchainlabs/nitro/arbutil"
 	"github.com/offchainlabs/nitro/util/containers"
 )
+
+type MaintenanceStatus struct {
+	IsRunning bool `json:"isRunning"`
+}
 
 type MessageResult struct {
 	BlockHash common.Hash
@@ -43,7 +48,9 @@ type ExecutionClient interface {
 	SetFinalityData(ctx context.Context, safeFinalityData *arbutil.FinalityData, finalizedFinalityData *arbutil.FinalityData, validatedFinalityData *arbutil.FinalityData) containers.PromiseInterface[struct{}]
 	MarkFeedStart(to arbutil.MessageIndex) containers.PromiseInterface[struct{}]
 
-	Maintenance() containers.PromiseInterface[struct{}]
+	TriggerMaintenance() containers.PromiseInterface[struct{}]
+	ShouldTriggerMaintenance() containers.PromiseInterface[bool]
+	MaintenanceStatus() containers.PromiseInterface[*MaintenanceStatus]
 
 	Start(ctx context.Context) error
 	StopAndWait()
@@ -55,6 +62,7 @@ type ExecutionRecorder interface {
 		ctx context.Context,
 		pos arbutil.MessageIndex,
 		msg *arbostypes.MessageWithMetadata,
+		wasmTargets []rawdb.WasmTarget,
 	) (*RecordResult, error)
 	MarkValid(pos arbutil.MessageIndex, resultHash common.Hash)
 	PrepareForRecord(ctx context.Context, start, end arbutil.MessageIndex) error
