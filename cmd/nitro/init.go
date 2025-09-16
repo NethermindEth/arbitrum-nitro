@@ -22,8 +22,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/offchainlabs/nitro/execution/nethexec"
-
 	"github.com/cavaliergopher/grab/v3"
 	"github.com/codeclysm/extract/v3"
 

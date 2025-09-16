@@ -20,8 +20,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/offchainlabs/nitro/execution/nethexec"
-
 	"github.com/cockroachdb/pebble"
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
