@@ -123,7 +123,7 @@ func (w *compareExecutionClient) HeadMessageIndex() containers.PromiseInterface[
 	log.Info("CompareExecutionClient: HeadMessageIndex")
 	internal := w.gethExecutionClient.HeadMessageIndex()
 	external := w.nethermindExecutionClient.HeadMessageIndex()
-	result := comparePromises(w, "HeadMessageIndex", internal, external)
+	result := comparePromises(nil, "HeadMessageIndex", internal, external)
 	log.Info("CompareExecutionClient: HeadMessageIndex completed", "elapsed", time.Since(start))
 	return result
 }
@@ -133,7 +133,7 @@ func (w *compareExecutionClient) ResultAtMessageIndex(index arbutil.MessageIndex
 	log.Info("CompareExecutionClient: ResultAtMessageIndex", "index", index)
 	internal := w.gethExecutionClient.ResultAtMessageIndex(index)
 	external := w.nethermindExecutionClient.ResultAtMessageIndex(index)
-	result := comparePromises(w, "ResultAtMessageIndex", internal, external)
+	result := comparePromises(nil, "ResultAtMessageIndex", internal, external)
 	log.Info("CompareExecutionClient: ResultAtMessageIndex completed", "index", index, "elapsed", time.Since(start))
 	return result
 }
