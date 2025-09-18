@@ -41,7 +41,7 @@ func NewCompareExecutionClient(gethExecutionClient *gethexec.ExecutionNode, neth
 	}
 }
 
-func comparePromises[T any](w *compareExecutionClient, op string,
+func comparePromises[T any](fatalErrChan chan error, op string,
 	internal containers.PromiseInterface[T],
 	external containers.PromiseInterface[T],
 ) containers.PromiseInterface[T] {
@@ -54,13 +54,15 @@ func comparePromises[T any](w *compareExecutionClient, op string,
 		extRes, extErr := external.Await(ctx)
 
 		if err := compare(op, intRes, intErr, extRes, extErr); err != nil {
-			// Send to fatal error channel for graceful shutdown
 			select {
-			case w.fatalErrChan <- fmt.Errorf("compareExecutionClient %s: %s", op, err.Error()):
+			case fatalErrChan <- fmt.Errorf("compareExecutionClient %s: %s", op, err.Error()):
+				// Successfully sent - this is a fatal operation
+				promise.ProduceError(err)
 			default:
-				log.Error("Failed to send comparison error to fatal channel", "err", err)
+				// Could not send (nil channel or full) - treat as non-fatal
+				log.Error("Non-fatal comparison error", "operation", op, "err", err)
+				promise.Produce(intRes)
 			}
-			promise.ProduceError(err)
 		} else {
 			promise.Produce(intRes)
 		}
@@ -97,7 +99,7 @@ func (w *compareExecutionClient) DigestMessage(index arbutil.MessageIndex, msg *
 	internal := w.gethExecutionClient.DigestMessage(index, msg, msgForPrefetch)
 	external := w.nethermindExecutionClient.DigestMessage(index, msg, msgForPrefetch)
 
-	result := comparePromises(w,
+	result := comparePromises(w.fatalErrChan,
 		"DigestMessage",
 		internal,
 		external,
@@ -113,7 +115,7 @@ func (w *compareExecutionClient) Reorg(count arbutil.MessageIndex, newMessages [
 	internal := w.gethExecutionClient.Reorg(count, newMessages, oldMessages)
 	external := w.nethermindExecutionClient.Reorg(count, newMessages, oldMessages)
 
-	result := comparePromises(w, "Reorg", internal, external)
+	result := comparePromises(w.fatalErrChan, "Reorg", internal, external)
 	log.Info("CompareExecutionClient: Reorg completed", "count", count, "elapsed", time.Since(start))
 	return result
 }
@@ -143,7 +145,7 @@ func (w *compareExecutionClient) MessageIndexToBlockNumber(messageIndex arbutil.
 	log.Info("CompareExecutionClient: MessageIndexToBlockNumber", "messageIndex", messageIndex)
 	internal := w.gethExecutionClient.MessageIndexToBlockNumber(messageIndex)
 	external := w.nethermindExecutionClient.MessageIndexToBlockNumber(messageIndex)
-	result := comparePromises(w, "MessageIndexToBlockNumber", internal, external)
+	result := comparePromises(w.fatalErrChan, "MessageIndexToBlockNumber", internal, external)
 	log.Info("CompareExecutionClient: MessageIndexToBlockNumber completed", "messageIndex", messageIndex, "elapsed", time.Since(start))
 	return result
 }
@@ -153,7 +155,7 @@ func (w *compareExecutionClient) BlockNumberToMessageIndex(blockNum uint64) cont
 	log.Info("CompareExecutionClient: BlockNumberToMessageIndex", "blockNum", blockNum)
 	internal := w.gethExecutionClient.BlockNumberToMessageIndex(blockNum)
 	external := w.nethermindExecutionClient.BlockNumberToMessageIndex(blockNum)
-	result := comparePromises(w, "BlockNumberToMessageIndex", internal, external)
+	result := comparePromises(w.fatalErrChan, "BlockNumberToMessageIndex", internal, external)
 	log.Info("CompareExecutionClient: BlockNumberToMessageIndex completed", "blockNum", blockNum, "elapsed", time.Since(start))
 	return result
 }
@@ -166,7 +168,7 @@ func (w *compareExecutionClient) SetFinalityData(ctx context.Context, finalityDa
 
 	internal := w.gethExecutionClient.SetFinalityData(ctx, finalityData, finalizedFinalityData, validatedFinalityData)
 	external := w.nethermindExecutionClient.SetFinalityData(ctx, finalityData, finalizedFinalityData, validatedFinalityData)
-	return comparePromises(w, "SetFinalityData", internal, external)
+	return comparePromises(w.fatalErrChan, "SetFinalityData", internal, external)
 }
 
 func (w *compareExecutionClient) MarkFeedStart(to arbutil.MessageIndex) containers.PromiseInterface[struct{}] {
@@ -174,7 +176,7 @@ func (w *compareExecutionClient) MarkFeedStart(to arbutil.MessageIndex) containe
 	log.Info("CompareExecutionClient: MarkFeedStart", "to", to)
 	internal := w.gethExecutionClient.MarkFeedStart(to)
 	external := w.nethermindExecutionClient.MarkFeedStart(to)
-	result := comparePromises(w, "MarkFeedStart", internal, external)
+	result := comparePromises(w.fatalErrChan, "MarkFeedStart", internal, external)
 	log.Info("CompareExecutionClient: MarkFeedStart completed", "to", to, "elapsed", time.Since(start))
 	return result
 }
@@ -192,7 +194,7 @@ func (w *compareExecutionClient) ShouldTriggerMaintenance() containers.PromiseIn
 	log.Info("CompareExecutionClient: ShouldTriggerMaintenance")
 	internal := w.gethExecutionClient.ShouldTriggerMaintenance()
 	external := w.nethermindExecutionClient.ShouldTriggerMaintenance()
-	result := comparePromises(w, "ShouldTriggerMaintenance", internal, external)
+	result := comparePromises(w.fatalErrChan, "ShouldTriggerMaintenance", internal, external)
 	log.Info("CompareExecutionClient: ShouldTriggerMaintenance completed", "elapsed", time.Since(start))
 	return result
 }
@@ -202,7 +204,7 @@ func (w *compareExecutionClient) MaintenanceStatus() containers.PromiseInterface
 	log.Info("CompareExecutionClient: MaintenanceStatus")
 	internal := w.gethExecutionClient.MaintenanceStatus()
 	external := w.nethermindExecutionClient.MaintenanceStatus()
-	result := comparePromises(w, "MaintenanceStatus", internal, external)
+	result := comparePromises(w.fatalErrChan, "MaintenanceStatus", internal, external)
 	log.Info("CompareExecutionClient: MaintenanceStatus completed", "elapsed", time.Since(start))
 	return result
 }
