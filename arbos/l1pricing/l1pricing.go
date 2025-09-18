@@ -523,6 +523,9 @@ func (ps *L1PricingState) getPosterUnitsWithoutCache(tx *types.Transaction, post
 	txBytes, merr := tx.MarshalBinary()
 	txType := tx.Type()
 	if !util.TxTypeHasPosterCosts(txType) || merr != nil {
+		if types.IsTargetBlock() {
+			types.OLog2(fmt.Sprintf("txType=%d TxTypeHasPosterCosts=false", txType))
+		}
 		return 0
 	}
 
@@ -530,25 +533,47 @@ func (ps *L1PricingState) getPosterUnitsWithoutCache(tx *types.Transaction, post
 	if err != nil {
 		panic(fmt.Sprintf("failed to compress tx: %v", err))
 	}
+
+	if types.IsTargetBlock() {
+		types.OLog2(fmt.Sprintf("l1Bytes=%d", l1Bytes))
+	}
+
 	return arbmath.SaturatingUMul(params.TxDataNonZeroGasEIP2028, l1Bytes)
 }
 
 // GetPosterInfo returns the poster cost and the calldata units for a transaction
 func (ps *L1PricingState) GetPosterInfo(tx *types.Transaction, poster common.Address, brotliCompressionLevel uint64) (*big.Int, uint64) {
 	if poster != BatchPosterAddress {
+		if types.IsTargetBlock() {
+			types.OLog2("poster is not the batch poster")
+		}
+
 		return common.Big0, 0
 	}
 	var units uint64
 	if cachedUnits := tx.GetCachedCalldataUnits(brotliCompressionLevel); cachedUnits != nil {
 		units = *cachedUnits
+
+		if types.IsTargetBlock() {
+			types.OLog2(fmt.Sprintf("cached units=%d", units))
+		}
 	} else {
 		// The cache is empty or invalid, so we need to compute the calldata units
 		units = ps.getPosterUnitsWithoutCache(tx, poster, brotliCompressionLevel)
 		tx.SetCachedCalldataUnits(brotliCompressionLevel, units)
+
+		if types.IsTargetBlock() {
+			types.OLog2(fmt.Sprintf("no cache units=%d", units))
+		}
 	}
 
 	// Approximate the l1 fee charged for posting this tx's calldata
 	pricePerUnit, _ := ps.PricePerUnit()
+
+	if types.IsTargetBlock() {
+		types.OLog2(fmt.Sprintf("1 pricePerUnit=%s units=%d", pricePerUnit, units))
+	}
+
 	return arbmath.BigMulByUint(pricePerUnit, units), units
 }
 
@@ -612,6 +637,11 @@ func (ps *L1PricingState) PosterDataCost(message *core.Message, poster common.Ad
 	units := ps.getPosterUnitsWithoutCache(tx, poster, brotliCompressionLevel)
 	units = arbmath.UintMulByBips(units+estimationPaddingUnits, arbmath.OneInBips+estimationPaddingBasisPoints)
 	pricePerUnit, _ := ps.PricePerUnit()
+
+	if types.IsTargetBlock() {
+		types.OLog2(fmt.Sprintf("2 pricePerUnit=%s units=%d", pricePerUnit, units))
+	}
+
 	return arbmath.BigMulByUint(pricePerUnit, units), units
 }
 

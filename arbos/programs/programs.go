@@ -8,13 +8,16 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"strings"
 
 	"github.com/ethereum/go-ethereum/arbitrum/multigas"
 	"github.com/ethereum/go-ethereum/common"
 	gethMath "github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
 	gethParams "github.com/ethereum/go-ethereum/params"
@@ -114,6 +117,11 @@ func (p Programs) ActivateProgram(evm *vm.EVM, address common.Address, runCtx *c
 	burner := p.programs.Burner()
 	time := evm.Context.Time
 
+	if types.IsTargetBlock() {
+		types.OLog2(fmt.Sprintf("stylus activateProgram contract=%s blockTimestamp=%d runMode=%s debugMode=%t",
+			strings.ToLower(address.Hex()), time, runCtx.RunModeMetricName(), debugMode))
+	}
+
 	if statedb.HasSelfDestructed(address) {
 		return 0, codeHash, common.Hash{}, nil, false, errors.New("self destructed")
 	}
@@ -128,6 +136,12 @@ func (p Programs) ActivateProgram(evm *vm.EVM, address common.Address, runCtx *c
 	if err != nil {
 		return 0, codeHash, common.Hash{}, nil, false, err
 	}
+
+	if types.IsTargetBlock() {
+		types.OLog2(fmt.Sprintf("stylus activateProgram programVersion=%d stylusVersion=%d expired=%t",
+			currentVersion, stylusVersion, expired))
+	}
+
 	if currentVersion == stylusVersion && !expired {
 		// already activated and up to date
 		return 0, codeHash, common.Hash{}, nil, false, ProgramUpToDateError()
@@ -144,9 +158,34 @@ func (p Programs) ActivateProgram(evm *vm.EVM, address common.Address, runCtx *c
 	// require the program's footprint not exceed the remaining memory budget
 	pageLimit := arbmath.SaturatingUSub(params.PageLimit, statedb.GetStylusPagesOpen())
 
-	info, err := activateProgram(statedb, address, codeHash, wasm, pageLimit, stylusVersion, p.ArbosVersion, debugMode, burner, runCtx)
+	if types.IsTargetBlock() {
+		wasmHash := crypto.Keccak256Hash(wasm)
+		targets := runCtx.WasmTargets()
+		targetNames := make([]string, len(targets))
+		for i, target := range targets {
+			targetNames[i] = string(target)
+		}
+		types.OLog2(fmt.Sprintf("stylus activateProgram wasmHash=%s pageLimit=%d targets=%s",
+			wasmHash.Hex(), pageLimit, strings.Join(targetNames, ",")))
+	}
+
+	info, asmMap, err := activateProgram(statedb, address, codeHash, wasm, pageLimit, stylusVersion, p.ArbosVersion, debugMode, burner, runCtx)
 	if err != nil {
 		return 0, codeHash, common.Hash{}, nil, true, err
+	}
+
+	if types.IsTargetBlock() {
+		asmMapHashes := make([]string, 0, len(asmMap))
+		for target, asm := range asmMap {
+			asmHash := crypto.Keccak256Hash(asm)
+			asmMapHashes = append(asmMapHashes, fmt.Sprintf("%s:%s", target, asmHash.Hex()))
+		}
+		types.OLog2(fmt.Sprintf("stylus activateProgram asmMap=%s", strings.Join(asmMapHashes, ",")))
+	}
+
+	if types.IsTargetBlock() {
+		types.OLog2(fmt.Sprintf("stylus activateProgram moduleHash=%s initGas=%d cachedInitGas=%d asmEstimateBytes=%d footprint=%d",
+			info.moduleHash.Hex(), info.initGas, info.cachedInitGas, info.asmEstimate, info.footprint))
 	}
 
 	// remove prev asm
@@ -170,6 +209,11 @@ func (p Programs) ActivateProgram(evm *vm.EVM, address common.Address, runCtx *c
 	dataFee, err := p.dataPricer.UpdateModel(info.asmEstimate, time)
 	if err != nil {
 		return 0, codeHash, common.Hash{}, nil, true, err
+	}
+
+	if types.IsTargetBlock() {
+		types.OLog2(fmt.Sprintf("stylus activateProgram estimateKb=%d dataFee=%s",
+			estimateKb, dataFee.String()))
 	}
 
 	programData := Program{
@@ -204,6 +248,10 @@ func (p Programs) CallProgram(
 	startingGas := contract.Gas
 	debugMode := evm.ChainConfig().DebugMode()
 
+	if types.IsTargetBlock() {
+		types.OLog2(fmt.Sprintf("stylus callProgram contract=%s codeHash=%s gas=%d gasPrice=%d scope={contractAddress=%s address=%s caller=%s}", strings.ToLower(contract.Address().String()), codeHash.String(), startingGas, evm.TxContext.GasPrice, strings.ToLower(scope.Contract.Address().String()), strings.ToLower(scope.Address().String()), strings.ToLower(scope.Caller().String())))
+	}
+
 	params, err := p.Params()
 	if err != nil {
 		return nil, err
@@ -225,8 +273,17 @@ func (p Programs) CallProgram(
 
 	// pay for memory init
 	open, ever := statedb.GetStylusPages()
+
+	if types.IsTargetBlock() {
+		types.OLog2(fmt.Sprintf("stylus callProgram pages openNow=%d openEver=%d", open, ever))
+	}
+
 	model := NewMemoryModel(params.FreePages, params.PageGas)
 	callCost := model.GasCost(program.footprint, open, ever)
+
+	if types.IsTargetBlock() {
+		types.OLog2(fmt.Sprintf("stylus callProgram model.GasCost() callCost=%d", callCost))
+	}
 
 	// pay for program init
 
@@ -238,9 +295,20 @@ func (p Programs) CallProgram(
 	if cached || program.version > 1 { // in version 1 cached cost is part of init cost
 		callCost = arbmath.SaturatingUAdd(callCost, program.cachedGas(params))
 	}
+
+	if types.IsTargetBlock() {
+		types.OLog2(fmt.Sprintf("stylus callProgram program.cachedGas() callCost=%d cached=%t programVersion=%d programCached=%t",
+			callCost, cached, program.version, program.cached))
+	}
+
 	if !cached {
 		callCost = arbmath.SaturatingUAdd(callCost, program.initGas(params))
 	}
+
+	if types.IsTargetBlock() {
+		types.OLog2(fmt.Sprintf("stylus callProgram program.initGas() callCost=%d", callCost))
+	}
+
 	if err := contract.BurnGas(callCost); err != nil {
 		return nil, err
 	}
@@ -265,7 +333,42 @@ func (p Programs) CallProgram(
 		txOrigin:        evm.TxContext.Origin,
 		reentrant:       arbmath.BoolToUint32(reentrant),
 		cached:          program.cached,
-		tracing:         tracingInfo != nil,
+		tracing:         tracingInfo != nil || types.IsTargetBlock(),
+	}
+
+	if types.IsTargetBlock() {
+		localAsmHash := crypto.Keccak256Hash(localAsm)
+
+		types.OLog2(fmt.Sprintf("stylus callProgram callCost=%d address=%s moduleHash=%s localAsmHash=%s scopeContract=%s tracingPresent=%t calldataLen=%d calldata=%s evmData{arbosVersion=%d blockBasefee=%s chainId=%d blockCoinbase=%s blockGasLimit=%d blockNumber=%d blockTimestamp=%d contractAddress=%s moduleHash=%s msgSender=%s msgValue=%s txGasPrice=%s txOrigin=%s reentrant=%d cached=%t tracing=%t} stylusConfig{Version=%d MaxDepth=%d InkPrice=%d DebugMode=%t} runMode=%s",
+			callCost,
+			strings.ToLower(contract.Address().Hex()),
+			moduleHash.Hex(),
+			localAsmHash.Hex(),
+			strings.ToLower(scope.Contract.Address().Hex()),
+			tracingInfo != nil,
+			len(calldata),
+			common.Bytes2Hex(calldata),
+			evmData.arbosVersion,
+			evmData.blockBasefee.Hex(),
+			evmData.chainId,
+			strings.ToLower(evmData.blockCoinbase.Hex()),
+			evmData.blockGasLimit,
+			evmData.blockNumber,
+			evmData.blockTimestamp,
+			strings.ToLower(evmData.contractAddress.Hex()),
+			evmData.moduleHash.Hex(),
+			strings.ToLower(evmData.msgSender.Hex()),
+			evmData.msgValue.Hex(),
+			evmData.txGasPrice.Hex(),
+			strings.ToLower(evmData.txOrigin.Hex()),
+			evmData.reentrant,
+			evmData.cached,
+			evmData.tracing,
+			goParams.Version,
+			goParams.MaxDepth,
+			goParams.InkPrice,
+			goParams.DebugMode,
+			runCtx.RunModeMetricName()))
 	}
 
 	address := contract.Address()
@@ -285,6 +388,10 @@ func (p Programs) CallProgram(
 
 		maxGasToReturn := startingGas - evmCost
 		contract.Gas = arbmath.MinInt(contract.Gas, maxGasToReturn)
+
+		if types.IsTargetBlock() {
+			types.OLog2(fmt.Sprintf("stylus callProgram startingGas=%d evmCost=%d gas=%d", startingGas, evmCost, contract.Gas))
+		}
 	}
 	attributeWasmComputation(contract, startingGas)
 
@@ -529,6 +636,11 @@ func (p Programs) getProgram(codeHash common.Hash, time uint64) (Program, error)
 		cached:        arbmath.BytesToBool(data[14:15]),
 	}
 	program.ageSeconds = hoursToAge(time, program.activatedAt)
+
+	if types.IsTargetBlock() {
+		types.OLog2(fmt.Sprintf("stylus getProgram codeHash=%s version=%d initCost=%d cachedCost=%d footprint=%d activatedAtHours=%d asmEstimateKb=%d ageSeconds=%d cached=%t", codeHash.String(), program.version, program.initCost, program.cachedCost, program.footprint, program.activatedAt, program.asmEstimateKb, program.ageSeconds, program.cached))
+	}
+
 	return program, err
 }
 
@@ -564,6 +676,11 @@ func (p Programs) setProgram(codehash common.Hash, program Program) error {
 	copy(data[8:], arbmath.Uint24ToBytes(program.activatedAt))
 	copy(data[11:], arbmath.Uint24ToBytes(program.asmEstimateKb))
 	copy(data[14:], arbmath.BoolToBytes(program.cached))
+
+	if types.IsTargetBlock() {
+		types.OLog2(fmt.Sprintf("stylus setProgram codeHash=%s version=%d initCost=%d cachedCost=%d footprint=%d activatedAtHours=%d asmEstimateKb=%d ageSeconds=%d cached=%t", codehash.String(), program.version, program.initCost, program.cachedCost, program.footprint, program.activatedAt, program.asmEstimateKb, program.ageSeconds, program.cached))
+	}
+
 	return p.programs.Set(codehash, data)
 }
 
@@ -578,6 +695,14 @@ func (p Programs) programExists(codeHash common.Hash, time uint64, params *Stylu
 }
 
 func (p Programs) ProgramKeepalive(codeHash common.Hash, time uint64, params *StylusParams) (*big.Int, error) {
+	if types.IsTargetBlock() {
+		types.OLog2(fmt.Sprintf("stylus programKeepalive codeHash=%s timestamp=%d stylusParams{arbosVersion=%d stylusVersion=%d inkPrice=%d pageGas=%d pageRamp=%d pageLimit=%d minInitGas=%d minCachedInitGas=%d initCostScalar=%d cachedCostScalar=%d expiryDays=%d keepaliveDays=%d blockCacheSize=%d maxWasmSize=%d}",
+			p.ArbosVersion, codeHash.Hex(), time, params.Version, params.InkPrice, params.PageGas, params.PageRamp,
+			params.PageLimit, params.MinInitGas, params.MinCachedInitGas, params.InitCostScalar,
+			params.CachedCostScalar, params.ExpiryDays, params.KeepaliveDays, params.BlockCacheSize,
+			params.MaxWasmSize))
+	}
+
 	program, err := p.getActiveProgram(codeHash, time, params)
 	if err != nil {
 		return nil, err

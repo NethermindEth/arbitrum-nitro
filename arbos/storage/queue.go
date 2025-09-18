@@ -4,7 +4,10 @@
 package storage
 
 import (
+	"fmt"
+
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 
 	"github.com/offchainlabs/nitro/arbos/util"
 )
@@ -67,11 +70,18 @@ func (q *Queue) Get() (*common.Hash, error) { // returns nil iff queue is empty
 	if empty || err != nil {
 		return nil, err
 	}
+
 	newOffset, err := q.nextGetOffset.Increment()
+
 	if err != nil {
 		return nil, err
 	}
 	res, err := q.storage.Swap(util.UintToHash(newOffset-1), common.Hash{})
+
+	if types.IsTargetBlock() {
+		types.OLog2(fmt.Sprintf("queue result swap=%s", res.String()))
+	}
+
 	return &res, err
 }
 

@@ -106,6 +106,10 @@ func ApplyInternalTxUpdate(tx *types.ArbitrumInternalTx, state *arbosState.Arbos
 
 		state.L2PricingState().UpdatePricingModel(timePassed)
 
+		if types.IsTargetBlock() {
+			types.OLog2(fmt.Sprintf("arbos version=%d", state.ArbOSVersion()))
+		}
+
 		return state.UpgradeArbosVersionIfNecessary(currentTime, evm.StateDB, evm.ChainConfig())
 	case InternalTxBatchPostingReportMethodID:
 		inputs, err := util.UnpackInternalTxDataBatchPostingReport(tx.Data)

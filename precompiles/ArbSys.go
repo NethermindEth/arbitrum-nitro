@@ -5,10 +5,13 @@ package precompiles
 
 import (
 	"errors"
+	"fmt"
 	"math/big"
+	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/tracing"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/params"
 
@@ -80,7 +83,11 @@ func (con *ArbSys) IsTopLevelCall(c ctx, evm mech) (bool, error) {
 
 // MapL1SenderContractAddressToL2Alias gets the contract's L2 alias
 func (con *ArbSys) MapL1SenderContractAddressToL2Alias(c ctx, sender addr, dest addr) (addr, error) {
-	return util.RemapL1Address(sender), nil
+	address := util.RemapL1Address(sender)
+	if types.IsTargetBlock() {
+		types.OLog2(fmt.Sprintf("remap result=%s", strings.ToLower(address.String())))
+	}
+	return address, nil
 }
 
 // WasMyCallersAddressAliased checks if the caller's caller was aliased
@@ -95,16 +102,33 @@ func (con *ArbSys) WasMyCallersAddressAliased(c ctx, evm mech) (bool, error) {
 
 // MyCallersAddressWithoutAliasing gets the caller's caller without any potential aliasing
 func (con *ArbSys) MyCallersAddressWithoutAliasing(c ctx, evm mech) (addr, error) {
+
+	// Out.Log($"precompile MyCallersAddressWithoutAliasing depth={context.CallDepth} origin={context.Origin} " +
+	// $"caller={context.Caller} grandCaller={context.GrandCaller}");
+
+	grandCaller := addr{}
 	address := addr{}
 
 	if evm.Depth() > 1 {
 		address = c.txProcessor.Contracts[evm.Depth()-2].Caller()
+		grandCaller = address
+	}
+
+	if types.IsTargetBlock() {
+		types.OLog2(fmt.Sprintf("precompile MyCallersAddressWithoutAliasing depth=%d origin=%s caller=%s grandCaller=%s",
+			evm.Depth(), strings.ToLower(evm.Origin.String()), strings.ToLower(c.caller.String()), strings.ToLower(grandCaller.String())))
 	}
 
 	aliased, err := con.WasMyCallersAddressAliased(c, evm)
+
 	if aliased {
 		address = util.InverseRemapL1Address(address)
 	}
+
+	if types.IsTargetBlock() {
+		types.OLog2(fmt.Sprintf("precompile MyCallersAddressWithoutAliasing address=%s gasLeft=%d", strings.ToLower(address.String()), c.gasSupplied-c.gasUsed.SingleGas()))
+	}
+
 	return address, err
 }
 
@@ -144,6 +168,18 @@ func (con *ArbSys) SendTxToL1(c ctx, evm mech, value huge, destination addr, cal
 
 	var t big.Int
 	t.SetUint64(evm.Context.Time)
+
+	if types.IsTargetBlock() {
+		types.OLog2(fmt.Sprintf("c=%s d=%s bn=%s l1bn=%s t=%s v=%s cd=%s",
+			common.Bytes2Hex(c.caller.Bytes()),
+			common.Bytes2Hex(destination.Bytes()),
+			common.Bytes2Hex(arbmath.U256Bytes(evm.Context.BlockNumber)),
+			common.Bytes2Hex(arbmath.U256Bytes(bigL1BlockNum)),
+			common.Bytes2Hex(arbmath.U256Bytes(&t)),
+			common.Bytes2Hex(common.BigToHash(value).Bytes()),
+			common.Bytes2Hex(calldataForL1)))
+	}
+
 	sendHash, err := arbosState.KeccakHash(
 		c.caller.Bytes(),
 		destination.Bytes(),
@@ -153,6 +189,11 @@ func (con *ArbSys) SendTxToL1(c ctx, evm mech, value huge, destination addr, cal
 		common.BigToHash(value).Bytes(),
 		calldataForL1,
 	)
+
+	if types.IsTargetBlock() {
+		types.OLog2(fmt.Sprintf("SendTxToL1 l1bn=%d sh=%s", l1BlockNum, sendHash.String()))
+	}
+
 	if err != nil {
 		return nil, err
 	}
@@ -172,11 +213,18 @@ func (con *ArbSys) SendTxToL1(c ctx, evm mech, value huge, destination addr, cal
 		return nil, err
 	}
 
+	i := 0
 	for _, merkleUpdateEvent := range merkleUpdateEvents {
 		position := merkletree.LevelAndLeaf{
 			Level: merkleUpdateEvent.Level,
 			Leaf:  merkleUpdateEvent.NumLeaves,
 		}
+
+		if types.IsTargetBlock() {
+			types.OLog2(fmt.Sprintf("SendTxToL1 i=%d p=%s", i, position.ToBigInt()))
+		}
+		i++
+
 		err := con.SendMerkleUpdate(
 			c,
 			evm,

@@ -6,6 +6,7 @@ package retryables
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/arbitrum/multigas"
@@ -309,8 +310,17 @@ func (rs *RetryableState) TryToReapOneRetryable(currentTimestamp uint64, evm *vm
 
 	windowsLeftStorage := retryableStorage.OpenStorageBackedUint64(timeoutWindowsLeftOffset)
 	windowsLeft, err := windowsLeftStorage.Get()
+
+	if types.IsTargetBlock() {
+		types.OLog2(fmt.Sprintf("reap retryable timeout=%d currentTimestamp=%d", timeout, currentTimestamp))
+	}
+
 	if err != nil || timeout >= currentTimestamp {
 		return err
+	}
+
+	if types.IsTargetBlock() {
+		types.OLog2(fmt.Sprintf("reap retryable windowsLeft=%d", windowsLeft))
 	}
 
 	// Either the retryable has expired, or it's lost a lifetime's worth of time

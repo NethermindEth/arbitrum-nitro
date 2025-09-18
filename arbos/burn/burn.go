@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/ethereum/go-ethereum/arbitrum/multigas"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
 
 	"github.com/offchainlabs/nitro/arbos/util"
@@ -38,6 +39,10 @@ func NewSystemBurner(tracingInfo *util.TracingInfo, readOnly bool) *SystemBurner
 }
 
 func (burner *SystemBurner) Burn(kind multigas.ResourceKind, amount uint64) error {
+	if types.TraceShowBurn && types.IsTargetBlock() {
+		types.OLog2(fmt.Sprintf("system burn=%d", amount))
+	}
+
 	burner.gasBurnt.SaturatingIncrementInto(kind, amount)
 	return nil
 }

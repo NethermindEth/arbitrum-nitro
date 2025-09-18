@@ -312,6 +312,9 @@ func (con ArbOwner) SetInfraFeeAccount(c ctx, evm mech, newInfraFeeAccount addr)
 
 // ScheduleArbOSUpgrade to the requested version at the requested timestamp
 func (con ArbOwner) ScheduleArbOSUpgrade(c ctx, evm mech, newVersion uint64, timestamp uint64) error {
+	if types.IsTargetBlock() {
+		types.OLog2(fmt.Sprintf("arbos scheduleUpgrade version=%d timestamp=%d", newVersion, timestamp))
+	}
 	return c.State.ScheduleArbOSUpgrade(newVersion, timestamp)
 }
 

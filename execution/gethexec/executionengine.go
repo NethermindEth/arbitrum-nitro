@@ -971,6 +971,7 @@ func (s *ExecutionEngine) appendBlock(block *types.Block, statedb *state.StateDB
 		logs = append(logs, receipt.Logs...)
 	}
 	startTime := time.Now()
+
 	if s.bc.GetVMConfig().Tracer != nil {
 		// InsertChain is basically WriteBlockAndSetHeadWithTime along with recomputing
 		// the entire block which is also traced which works directly for live-tracing

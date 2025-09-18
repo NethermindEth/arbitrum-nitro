@@ -132,7 +132,7 @@ func compare[T any](op string, intRes T, intErr error, extRes T, extErr error) e
 
 func (w *compareExecutionClient) DigestMessage(index arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata, msgForPrefetch *arbostypes.MessageWithMetadata) containers.PromiseInterface[*execution.MessageResult] {
 	start := time.Now()
-	log.Info("CompareExecutionClient: DigestMessage", "index", index)
+	log.Debug("CompareExecutionClient: DigestMessage", "index", index)
 	internal := w.gethExecutionClient.DigestMessage(index, msg, msgForPrefetch)
 	external := w.nethermindExecutionClient.DigestMessage(index, msg, msgForPrefetch)
 
@@ -141,64 +141,64 @@ func (w *compareExecutionClient) DigestMessage(index arbutil.MessageIndex, msg *
 		internal,
 		external,
 	)
-	log.Info("CompareExecutionClient: DigestMessage completed", "index", index, "elapsed", time.Since(start))
+	log.Debug("CompareExecutionClient: DigestMessage completed", "index", index, "elapsed", time.Since(start))
 	return result
 }
 
 func (w *compareExecutionClient) Reorg(count arbutil.MessageIndex, newMessages []arbostypes.MessageWithMetadataAndBlockInfo, oldMessages []*arbostypes.MessageWithMetadata) containers.PromiseInterface[[]*execution.MessageResult] {
 	start := time.Now()
-	log.Info("CompareExecutionClient: Reorg", "count", count, "newMessagesCount", len(newMessages), "oldMessagesCount", len(oldMessages))
+	log.Debug("CompareExecutionClient: Reorg", "count", count, "newMessagesCount", len(newMessages), "oldMessagesCount", len(oldMessages))
 
 	internal := w.gethExecutionClient.Reorg(count, newMessages, oldMessages)
 	external := w.nethermindExecutionClient.Reorg(count, newMessages, oldMessages)
 
 	result := comparePromises(w.fatalErrChan, "Reorg", internal, external)
-	log.Info("CompareExecutionClient: Reorg completed", "count", count, "elapsed", time.Since(start))
+	log.Debug("CompareExecutionClient: Reorg completed", "count", count, "elapsed", time.Since(start))
 	return result
 }
 
 func (w *compareExecutionClient) HeadMessageIndex() containers.PromiseInterface[arbutil.MessageIndex] {
 	start := time.Now()
-	log.Info("CompareExecutionClient: HeadMessageIndex")
+	log.Debug("CompareExecutionClient: HeadMessageIndex")
 	internal := w.gethExecutionClient.HeadMessageIndex()
 	external := w.nethermindExecutionClient.HeadMessageIndex()
 	result := comparePromises(nil, "HeadMessageIndex", internal, external)
-	log.Info("CompareExecutionClient: HeadMessageIndex completed", "elapsed", time.Since(start))
+	log.Debug("CompareExecutionClient: HeadMessageIndex completed", "elapsed", time.Since(start))
 	return result
 }
 
 func (w *compareExecutionClient) ResultAtMessageIndex(index arbutil.MessageIndex) containers.PromiseInterface[*execution.MessageResult] {
 	start := time.Now()
-	log.Info("CompareExecutionClient: ResultAtMessageIndex", "index", index)
+	log.Debug("CompareExecutionClient: ResultAtMessageIndex", "index", index)
 	internal := w.gethExecutionClient.ResultAtMessageIndex(index)
 	external := w.nethermindExecutionClient.ResultAtMessageIndex(index)
 	result := comparePromises(nil, "ResultAtMessageIndex", internal, external)
-	log.Info("CompareExecutionClient: ResultAtMessageIndex completed", "index", index, "elapsed", time.Since(start))
+	log.Debug("CompareExecutionClient: ResultAtMessageIndex completed", "index", index, "elapsed", time.Since(start))
 	return result
 }
 
 func (w *compareExecutionClient) MessageIndexToBlockNumber(messageIndex arbutil.MessageIndex) containers.PromiseInterface[uint64] {
 	start := time.Now()
-	log.Info("CompareExecutionClient: MessageIndexToBlockNumber", "messageIndex", messageIndex)
+	log.Debug("CompareExecutionClient: MessageIndexToBlockNumber", "messageIndex", messageIndex)
 	internal := w.gethExecutionClient.MessageIndexToBlockNumber(messageIndex)
 	external := w.nethermindExecutionClient.MessageIndexToBlockNumber(messageIndex)
 	result := comparePromises(w.fatalErrChan, "MessageIndexToBlockNumber", internal, external)
-	log.Info("CompareExecutionClient: MessageIndexToBlockNumber completed", "messageIndex", messageIndex, "elapsed", time.Since(start))
+	log.Debug("CompareExecutionClient: MessageIndexToBlockNumber completed", "messageIndex", messageIndex, "elapsed", time.Since(start))
 	return result
 }
 
 func (w *compareExecutionClient) BlockNumberToMessageIndex(blockNum uint64) containers.PromiseInterface[arbutil.MessageIndex] {
 	start := time.Now()
-	log.Info("CompareExecutionClient: BlockNumberToMessageIndex", "blockNum", blockNum)
+	log.Debug("CompareExecutionClient: BlockNumberToMessageIndex", "blockNum", blockNum)
 	internal := w.gethExecutionClient.BlockNumberToMessageIndex(blockNum)
 	external := w.nethermindExecutionClient.BlockNumberToMessageIndex(blockNum)
 	result := comparePromises(w.fatalErrChan, "BlockNumberToMessageIndex", internal, external)
-	log.Info("CompareExecutionClient: BlockNumberToMessageIndex completed", "blockNum", blockNum, "elapsed", time.Since(start))
+	log.Debug("CompareExecutionClient: BlockNumberToMessageIndex completed", "blockNum", blockNum, "elapsed", time.Since(start))
 	return result
 }
 
 func (w *compareExecutionClient) SetFinalityData(finalityData *arbutil.FinalityData, finalizedFinalityData *arbutil.FinalityData, validatedFinalityData *arbutil.FinalityData) containers.PromiseInterface[struct{}] {
-	log.Info("CompareExecutionClient: SetFinalityData",
+	log.Debug("CompareExecutionClient: SetFinalityData",
 		"safeFinalityData", finalityData,
 		"finalizedFinalityData", finalizedFinalityData,
 		"validatedFinalityData", validatedFinalityData)
@@ -210,92 +210,92 @@ func (w *compareExecutionClient) SetFinalityData(finalityData *arbutil.FinalityD
 
 func (w *compareExecutionClient) SetConsensusSyncData(syncData *execution.ConsensusSyncData) containers.PromiseInterface[struct{}] {
 	start := time.Now()
-	log.Info("CompareExecutionClient: SetConsensusSyncData")
+	log.Debug("CompareExecutionClient: SetConsensusSyncData")
 	result := w.gethExecutionClient.SetConsensusSyncData(syncData)
-	log.Info("CompareExecutionClient: SetConsensusSyncData completed", "elapsed", time.Since(start))
+	log.Debug("CompareExecutionClient: SetConsensusSyncData completed", "elapsed", time.Since(start))
 	return result
 }
 
 func (w *compareExecutionClient) MarkFeedStart(to arbutil.MessageIndex) containers.PromiseInterface[struct{}] {
 	start := time.Now()
-	log.Info("CompareExecutionClient: MarkFeedStart", "to", to)
+	log.Debug("CompareExecutionClient: MarkFeedStart", "to", to)
 	internal := w.gethExecutionClient.MarkFeedStart(to)
 	external := w.nethermindExecutionClient.MarkFeedStart(to)
 	result := comparePromises(w.fatalErrChan, "MarkFeedStart", internal, external)
-	log.Info("CompareExecutionClient: MarkFeedStart completed", "to", to, "elapsed", time.Since(start))
+	log.Debug("CompareExecutionClient: MarkFeedStart completed", "to", to, "elapsed", time.Since(start))
 	return result
 }
 
 func (w *compareExecutionClient) TriggerMaintenance() containers.PromiseInterface[struct{}] {
 	start := time.Now()
-	log.Info("CompareExecutionClient: TriggerMaintenance")
+	log.Debug("CompareExecutionClient: TriggerMaintenance")
 	result := w.gethExecutionClient.TriggerMaintenance()
-	log.Info("CompareExecutionClient: TriggerMaintenance completed", "elapsed", time.Since(start))
+	log.Debug("CompareExecutionClient: TriggerMaintenance completed", "elapsed", time.Since(start))
 	return result
 }
 
 func (w *compareExecutionClient) ShouldTriggerMaintenance() containers.PromiseInterface[bool] {
 	start := time.Now()
-	log.Info("CompareExecutionClient: ShouldTriggerMaintenance")
+	log.Debug("CompareExecutionClient: ShouldTriggerMaintenance")
 	internal := w.gethExecutionClient.ShouldTriggerMaintenance()
 	external := w.nethermindExecutionClient.ShouldTriggerMaintenance()
 	result := comparePromises(w.fatalErrChan, "ShouldTriggerMaintenance", internal, external)
-	log.Info("CompareExecutionClient: ShouldTriggerMaintenance completed", "elapsed", time.Since(start))
+	log.Debug("CompareExecutionClient: ShouldTriggerMaintenance completed", "elapsed", time.Since(start))
 	return result
 }
 
 func (w *compareExecutionClient) MaintenanceStatus() containers.PromiseInterface[*execution.MaintenanceStatus] {
 	start := time.Now()
-	log.Info("CompareExecutionClient: MaintenanceStatus")
+	log.Debug("CompareExecutionClient: MaintenanceStatus")
 	internal := w.gethExecutionClient.MaintenanceStatus()
 	external := w.nethermindExecutionClient.MaintenanceStatus()
 	result := comparePromises(w.fatalErrChan, "MaintenanceStatus", internal, external)
-	log.Info("CompareExecutionClient: MaintenanceStatus completed", "elapsed", time.Since(start))
+	log.Debug("CompareExecutionClient: MaintenanceStatus completed", "elapsed", time.Since(start))
 	return result
 }
 
 func (w *compareExecutionClient) Start(ctx context.Context) error {
 	start := time.Now()
-	log.Info("CompareExecutionClient: Start")
+	log.Debug("CompareExecutionClient: Start")
 	err := w.gethExecutionClient.Start(ctx)
-	log.Info("CompareExecutionClient: Start completed", "elapsed", time.Since(start))
+	log.Debug("CompareExecutionClient: Start completed", "elapsed", time.Since(start))
 	return err
 }
 
 func (w *compareExecutionClient) StopAndWait() {
 	start := time.Now()
-	log.Info("CompareExecutionClient: StopAndWait")
+	log.Debug("CompareExecutionClient: StopAndWait")
 	w.gethExecutionClient.StopAndWait()
-	log.Info("CompareExecutionClient: StopAndWait completed", "elapsed", time.Since(start))
+	log.Debug("CompareExecutionClient: StopAndWait completed", "elapsed", time.Since(start))
 }
 
 // ---- execution.ExecutionSequencer interface methods ----
 
 func (w *compareExecutionClient) Pause() {
 	start := time.Now()
-	log.Info("CompareExecutionClient: Pause")
+	log.Debug("CompareExecutionClient: Pause")
 	w.gethExecutionClient.Pause()
-	log.Info("CompareExecutionClient: Pause completed", "elapsed", time.Since(start))
+	log.Debug("CompareExecutionClient: Pause completed", "elapsed", time.Since(start))
 }
 
 func (w *compareExecutionClient) Activate() {
 	start := time.Now()
-	log.Info("CompareExecutionClient: Activate")
+	log.Debug("CompareExecutionClient: Activate")
 	w.gethExecutionClient.Activate()
-	log.Info("CompareExecutionClient: Activate completed", "elapsed", time.Since(start))
+	log.Debug("CompareExecutionClient: Activate completed", "elapsed", time.Since(start))
 }
 
 func (w *compareExecutionClient) ForwardTo(url string) error {
 	start := time.Now()
-	log.Info("CompareExecutionClient: ForwardTo", "url", url)
+	log.Debug("CompareExecutionClient: ForwardTo", "url", url)
 	err := w.gethExecutionClient.ForwardTo(url)
-	log.Info("CompareExecutionClient: ForwardTo completed", "url", url, "err", err, "elapsed", time.Since(start))
+	log.Debug("CompareExecutionClient: ForwardTo completed", "url", url, "err", err, "elapsed", time.Since(start))
 	return err
 }
 
 func (w *compareExecutionClient) SequenceDelayedMessage(message *arbostypes.L1IncomingMessage, delayedSeqNum uint64) error {
 	start := time.Now()
-	log.Info("CompareExecutionClient: SequenceDelayedMessage", "delayedSeqNum", delayedSeqNum)
+	log.Debug("CompareExecutionClient: SequenceDelayedMessage", "delayedSeqNum", delayedSeqNum)
 
 	internalErr := w.gethExecutionClient.SequenceDelayedMessage(message, delayedSeqNum)
 	externalErr := w.nethermindExecutionClient.SequenceDelayedMessage(message, delayedSeqNum)
@@ -311,46 +311,46 @@ func (w *compareExecutionClient) SequenceDelayedMessage(message *arbostypes.L1In
 		return err
 	}
 
-	log.Info("CompareExecutionClient: SequenceDelayedMessage completed", "delayedSeqNum", delayedSeqNum, "err", internalErr, "elapsed", time.Since(start))
+	log.Debug("CompareExecutionClient: SequenceDelayedMessage completed", "delayedSeqNum", delayedSeqNum, "err", internalErr, "elapsed", time.Since(start))
 	return internalErr
 }
 
 func (w *compareExecutionClient) NextDelayedMessageNumber() (uint64, error) {
 	// start := time.Now()
-	// log.Info("CompareExecutionClient: NextDelayedMessageNumber")
+	// log.Debug("CompareExecutionClient: NextDelayedMessageNumber")
 	result, err := w.gethExecutionClient.NextDelayedMessageNumber()
-	// log.Info("CompareExecutionClient: NextDelayedMessageNumber completed", "result", result, "err", err, "elapsed", time.Since(start))
+	// log.Debug("CompareExecutionClient: NextDelayedMessageNumber completed", "result", result, "err", err, "elapsed", time.Since(start))
 	return result, err
 }
 
 func (w *compareExecutionClient) Synced(ctx context.Context) bool {
 	start := time.Now()
-	log.Info("CompareExecutionClient: Synced")
+	log.Debug("CompareExecutionClient: Synced")
 
 	internal := w.gethExecutionClient.Synced(ctx)
 	external := w.nethermindExecutionClient.Synced(ctx)
 
 	if internal != external {
-		log.Warn("Synced status mismatch", "geth", internal, "nethermind", external)
+		log.Debug("Synced status mismatch", "geth", internal, "nethermind", external)
 	}
 
-	log.Info("CompareExecutionClient: Synced completed", "geth", internal, "nethermind", external, "elapsed", time.Since(start))
+	log.Debug("CompareExecutionClient: Synced completed", "geth", internal, "nethermind", external, "elapsed", time.Since(start))
 	return internal // Use Geth as source of truth
 }
 
 func (w *compareExecutionClient) FullSyncProgressMap(ctx context.Context) map[string]interface{} {
 	start := time.Now()
-	log.Info("CompareExecutionClient: FullSyncProgressMap")
+	log.Debug("CompareExecutionClient: FullSyncProgressMap")
 
 	internal := w.gethExecutionClient.FullSyncProgressMap(ctx)
 	external := w.nethermindExecutionClient.FullSyncProgressMap(ctx)
 
 	// Log any significant differences for observability
 	if len(internal) != len(external) {
-		log.Info("FullSyncProgressMap size difference", "gethKeys", len(internal), "nethermindKeys", len(external))
+		log.Debug("FullSyncProgressMap size difference", "gethKeys", len(internal), "nethermindKeys", len(external))
 	}
 
-	log.Info("CompareExecutionClient: FullSyncProgressMap completed", "elapsed", time.Since(start))
+	log.Debug("CompareExecutionClient: FullSyncProgressMap completed", "elapsed", time.Since(start))
 	return internal // Use Geth as source of truth
 }
 
@@ -358,24 +358,24 @@ func (w *compareExecutionClient) FullSyncProgressMap(ctx context.Context) map[st
 
 func (w *compareExecutionClient) RecordBlockCreation(ctx context.Context, index arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata, wasmTargets []rawdb.WasmTarget) (*execution.RecordResult, error) {
 	start := time.Now()
-	log.Info("CompareExecutionClient: RecordBlockCreation", "index", index)
+	log.Debug("CompareExecutionClient: RecordBlockCreation", "index", index)
 	result, err := w.gethExecutionClient.RecordBlockCreation(ctx, index, msg, wasmTargets)
-	log.Info("CompareExecutionClient: RecordBlockCreation completed", "index", index, "err", err, "elapsed", time.Since(start))
+	log.Debug("CompareExecutionClient: RecordBlockCreation completed", "index", index, "err", err, "elapsed", time.Since(start))
 	return result, err
 }
 
 func (w *compareExecutionClient) MarkValid(index arbutil.MessageIndex, resultHash common.Hash) {
 	start := time.Now()
-	log.Info("CompareExecutionClient: MarkValid", "index", index, "resultHash", resultHash)
+	log.Debug("CompareExecutionClient: MarkValid", "index", index, "resultHash", resultHash)
 	w.gethExecutionClient.MarkValid(index, resultHash)
-	log.Info("CompareExecutionClient: MarkValid completed", "index", index, "elapsed", time.Since(start))
+	log.Debug("CompareExecutionClient: MarkValid completed", "index", index, "elapsed", time.Since(start))
 }
 
 func (w *compareExecutionClient) PrepareForRecord(ctx context.Context, start, end arbutil.MessageIndex) error {
 	startTime := time.Now()
-	log.Info("CompareExecutionClient: PrepareForRecord", "start", start, "end", end)
+	log.Debug("CompareExecutionClient: PrepareForRecord", "start", start, "end", end)
 	err := w.gethExecutionClient.PrepareForRecord(ctx, start, end)
-	log.Info("CompareExecutionClient: PrepareForRecord completed", "start", start, "end", end, "err", err, "elapsed", time.Since(startTime))
+	log.Debug("CompareExecutionClient: PrepareForRecord completed", "start", start, "end", end, "err", err, "elapsed", time.Since(startTime))
 	return err
 }
 
@@ -383,12 +383,12 @@ func (w *compareExecutionClient) PrepareForRecord(ctx context.Context, start, en
 
 func (w *compareExecutionClient) ArbOSVersionForMessageIndex(msgIdx arbutil.MessageIndex) containers.PromiseInterface[uint64] {
 	start := time.Now()
-	log.Info("CompareExecutionClient: ArbOSVersionForMessageIndex", "msgIdx", msgIdx)
+	log.Debug("CompareExecutionClient: ArbOSVersionForMessageIndex", "msgIdx", msgIdx)
 	promise := w.gethExecutionClient.ArbOSVersionForMessageIndex(msgIdx)
 	// Wait for promise to resolve for logging
 	go func() {
 		result, err := promise.Await(context.Background())
-		log.Info("CompareExecutionClient: ArbOSVersionForMessageIndex completed", "msgIdx", msgIdx, "result", result, "err", err, "elapsed", time.Since(start))
+		log.Debug("CompareExecutionClient: ArbOSVersionForMessageIndex completed", "msgIdx", msgIdx, "result", result, "err", err, "elapsed", time.Since(start))
 	}()
 	return promise
 }

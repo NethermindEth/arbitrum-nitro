@@ -233,7 +233,7 @@ pub trait UserHost<DR: DataReader>: GasMeteredMachine {
         let gas_left = self.gas_left()?;
         let (gas_cost, outcome) = self
             .evm_api()
-            .flush_storage_cache(clear, gas_left + Gas(1))?;
+            .flush_storage_cache(clear, gas_left)?;
         if self.evm_data().arbos_version >= ARBOS_VERSION_STYLUS_CHARGING_FIXES {
             self.buy_gas(gas_cost)?;
         }

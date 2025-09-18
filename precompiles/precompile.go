@@ -753,6 +753,10 @@ func (p *Precompile) Call(
 		return nil, 0, multigas.ComputationGas(gasSupplied), vm.ErrExecutionReverted
 	}
 
+	if types.IsTargetBlock() {
+		types.OLog2(fmt.Sprintf("precompile m=%s", method.name))
+	}
+
 	if method.purity >= view && actingAsAddress != p.address {
 		// should not access precompile superpowers when not acting as the precompile
 		return nil, 0, multigas.ComputationGas(gasSupplied), vm.ErrExecutionReverted
@@ -810,6 +814,11 @@ func (p *Precompile) Call(
 	}
 
 	reflectResult := method.handler.Func.Call(reflectArgs)
+
+	if types.IsTargetBlock() {
+		types.OLog2("precompile finished")
+	}
+
 	resultCount := len(reflectResult) - 1
 	if !reflectResult[resultCount].IsNil() {
 		// the last arg is always the error status
