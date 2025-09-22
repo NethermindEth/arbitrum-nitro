@@ -70,6 +70,7 @@ import (
 	"github.com/offchainlabs/nitro/daprovider/das/dasutil"
 	"github.com/offchainlabs/nitro/deploy"
 	"github.com/offchainlabs/nitro/execution/gethexec"
+	"github.com/offchainlabs/nitro/execution/nethexec"
 	_ "github.com/offchainlabs/nitro/execution/nodeInterface"
 	"github.com/offchainlabs/nitro/solgen/go/bridgegen"
 	"github.com/offchainlabs/nitro/solgen/go/localgen"
@@ -97,13 +98,14 @@ import (
 type info = *BlockchainTestInfo
 
 type SecondNodeParams struct {
-	nodeConfig             *arbnode.Config
-	execConfig             *gethexec.Config
-	stackConfig            *node.Config
-	dasConfig              *das.DataAvailabilityConfig
-	initData               *statetransfer.ArbosInitializationInfo
-	addresses              *chaininfo.RollupAddresses
-	useExecutionClientOnly bool
+	nodeConfig                 *arbnode.Config
+	execConfig                 *gethexec.Config
+	stackConfig                *node.Config
+	dasConfig                  *das.DataAvailabilityConfig
+	initData                   *statetransfer.ArbosInitializationInfo
+	addresses                  *chaininfo.RollupAddresses
+	useExecutionClientOnly     bool
+	useExternalExecutionClient bool // Use external Nethermind execution client instead of internal geth
 }
 
 type TestClient struct {
@@ -942,7 +944,7 @@ func build2ndNode(
 
 	testClient := NewTestClient(ctx)
 	testClient.Client, testClient.ConsensusNode =
-		Create2ndNodeWithConfig(t, ctx, firstNodeTestClient.ConsensusNode, parentChainTestClient.Stack, parentChainInfo, params.initData, params.nodeConfig, params.execConfig, params.stackConfig, valnodeConfig, params.addresses, initMessage, params.useExecutionClientOnly)
+		Create2ndNodeWithConfig(t, ctx, firstNodeTestClient.ConsensusNode, parentChainTestClient.Stack, parentChainInfo, params.initData, params.nodeConfig, params.execConfig, params.stackConfig, valnodeConfig, params.addresses, initMessage, params.useExecutionClientOnly, params.useExternalExecutionClient)
 	testClient.ExecNode = getExecNode(t, testClient.ConsensusNode)
 	testClient.cleanup = func() { testClient.ConsensusNode.StopAndWait() }
 	return testClient, func() { testClient.cleanup() }
@@ -1720,6 +1722,7 @@ func Create2ndNodeWithConfig(
 	addresses *chaininfo.RollupAddresses,
 	initMessage *arbostypes.ParsedInitMessage,
 	useExecutionClientOnly bool,
+	useExternalExecutionClient bool,
 ) (*ethclient.Client, *arbnode.Node) {
 	if nodeConfig == nil {
 		nodeConfig = arbnode.ConfigDefaultL1NonSequencerTest()
@@ -1769,19 +1772,47 @@ func Create2ndNodeWithConfig(
 
 	Require(t, nodeConfig.Validate())
 	configFetcher := func() *gethexec.Config { return execConfig }
-	currentExec, err := gethexec.CreateExecutionNode(ctx, chainStack, chainDb, blockchain, parentChainClient, configFetcher, 0)
-	Require(t, err)
 
 	var currentNode *arbnode.Node
 	locator, err := server_common.NewMachineLocator(valnodeConfig.Wasm.RootPath)
 	Require(t, err)
-	if useExecutionClientOnly {
-		currentNode, err = arbnode.CreateNodeExecutionClient(ctx, chainStack, currentExec, arbDb, NewFetcherFromConfig(nodeConfig), blockchain.Config(), parentChainClient, addresses, &validatorTxOpts, &sequencerTxOpts, dataSigner, feedErrChan, big.NewInt(1337), nil, locator.LatestWasmModuleRoot())
-	} else {
-		currentNode, err = arbnode.CreateNodeFullExecutionClient(ctx, chainStack, currentExec, currentExec, currentExec, currentExec, arbDb, NewFetcherFromConfig(nodeConfig), blockchain.Config(), parentChainClient, addresses, &validatorTxOpts, &sequencerTxOpts, dataSigner, feedErrChan, big.NewInt(1337), nil, locator.LatestWasmModuleRoot())
-	}
 
-	Require(t, err)
+	if useExternalExecutionClient {
+		// Create external Nethermind execution client
+		nethermindExecClient, err := nethexec.NewNethermindExecutionClient()
+		Require(t, err)
+
+		// Call DigestInitMessage for external client initialization
+		if initMessage != nil {
+			result := nethermindExecClient.DigestInitMessage(ctx, initMessage.InitialL1BaseFee, initMessage.SerializedChainConfig)
+			if result == nil {
+				t.Fatal("DigestInitMessage returned nil for external execution client")
+			}
+		}
+
+		if useExecutionClientOnly {
+			currentNode, err = arbnode.CreateNodeExecutionClient(ctx, chainStack, nethermindExecClient, arbDb, NewFetcherFromConfig(nodeConfig), blockchain.Config(), parentChainClient, addresses, &validatorTxOpts, &sequencerTxOpts, dataSigner, feedErrChan, big.NewInt(1337), nil, locator.LatestWasmModuleRoot())
+			Require(t, err)
+		} else {
+			// For external execution client, we still need to create the internal geth execution node for full functionality
+			currentExec, execErr := gethexec.CreateExecutionNode(ctx, chainStack, chainDb, blockchain, parentChainClient, configFetcher, 0)
+			Require(t, execErr)
+			currentNode, err = arbnode.CreateNodeFullExecutionClient(ctx, chainStack, nethermindExecClient, currentExec, currentExec, currentExec, arbDb, NewFetcherFromConfig(nodeConfig), blockchain.Config(), parentChainClient, addresses, &validatorTxOpts, &sequencerTxOpts, dataSigner, feedErrChan, big.NewInt(1337), nil, locator.LatestWasmModuleRoot())
+			Require(t, err)
+		}
+	} else {
+		// Use internal geth execution client (original behavior)
+		currentExec, execErr := gethexec.CreateExecutionNode(ctx, chainStack, chainDb, blockchain, parentChainClient, configFetcher, 0)
+		Require(t, execErr)
+
+		if useExecutionClientOnly {
+			currentNode, err = arbnode.CreateNodeExecutionClient(ctx, chainStack, currentExec, arbDb, NewFetcherFromConfig(nodeConfig), blockchain.Config(), parentChainClient, addresses, &validatorTxOpts, &sequencerTxOpts, dataSigner, feedErrChan, big.NewInt(1337), nil, locator.LatestWasmModuleRoot())
+			Require(t, err)
+		} else {
+			currentNode, err = arbnode.CreateNodeFullExecutionClient(ctx, chainStack, currentExec, currentExec, currentExec, currentExec, arbDb, NewFetcherFromConfig(nodeConfig), blockchain.Config(), parentChainClient, addresses, &validatorTxOpts, &sequencerTxOpts, dataSigner, feedErrChan, big.NewInt(1337), nil, locator.LatestWasmModuleRoot())
+			Require(t, err)
+		}
+	}
 
 	err = currentNode.Start(ctx)
 	Require(t, err)
