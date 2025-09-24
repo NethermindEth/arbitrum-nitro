@@ -737,8 +737,6 @@ func (s *Sequencer) publishTransactionToQueue(queueCtx context.Context, tx *type
 		}
 	}
 
-	callstack.LogCallStack("")
-
 	var blockStamp uint64
 	if isExpressLaneController && config.Timeboost.QueueTimeoutInBlocks > 0 {
 		blockStamp = s.execEngine.bc.CurrentBlock().Number.Uint64()

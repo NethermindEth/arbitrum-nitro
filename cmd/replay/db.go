@@ -31,7 +31,6 @@ func (db PreimageDb) DeleteRange(start, end []byte) error {
 }
 
 func (db PreimageDb) Get(key []byte) ([]byte, error) {
-	callstack.LogCallStack("")
 	var hash [32]byte
 	copy(hash[:], key)
 	if len(key) == 32 {

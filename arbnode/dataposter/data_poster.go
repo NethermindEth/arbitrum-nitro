@@ -964,8 +964,6 @@ func (p *DataPoster) sendTx(ctx context.Context, s *state.LockedInternalState, p
 		}
 	}
 
-	callstack.LogCallStack("")
-
 	if err := p.client.SendTransaction(ctx, newTx.FullTx); err != nil {
 		isAlreadyKnown := rpcclient.IsAlreadyKnownError(err)
 		isAlreadyKnown = isAlreadyKnown || strings.Contains(err.Error(), "nonce too low")
