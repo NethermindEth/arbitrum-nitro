@@ -3,6 +3,8 @@ package nethexec
 import (
 	"context"
 	"fmt"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -31,9 +33,15 @@ type compareExecutionClient struct {
 	gethExecutionClient       *gethexec.ExecutionNode
 	nethermindExecutionClient *nethermindExecutionClient
 	fatalErrChan              chan error
+	consensus                 execution.FullConsensusClient
+	syncMutex                 sync.Mutex
 }
 
-func NewCompareExecutionClient(gethExecutionClient *gethexec.ExecutionNode, nethermindExecutionClient *nethermindExecutionClient, fatalErrChan chan error) *compareExecutionClient {
+func NewCompareExecutionClient(
+	gethExecutionClient *gethexec.ExecutionNode,
+	nethermindExecutionClient *nethermindExecutionClient,
+	fatalErrChan chan error,
+) *compareExecutionClient {
 	return &compareExecutionClient{
 		gethExecutionClient:       gethExecutionClient,
 		nethermindExecutionClient: nethermindExecutionClient,
@@ -70,6 +78,63 @@ func comparePromises[T any](fatalErrChan chan error, op string,
 	return &promise
 }
 
+func (w *compareExecutionClient) isBootstrapCase(intErr, extErr error) bool {
+	// Check if external client has "Failed to get latest header" error (uninitialized)
+	// and internal client has a valid response (initialized)
+	extUninitialized := extErr != nil && strings.Contains(extErr.Error(), "Failed to get latest header")
+	intInitialized := intErr == nil
+
+	// Bootstrap case: external client is uninitialized and internal client is initialized
+	return extUninitialized && intInitialized
+}
+
+// handleBootstrapInitialization initializes the external Nethermind client using DigestInitMessage
+func (w *compareExecutionClient) handleBootstrapInitialization(ctx context.Context, intRes arbutil.MessageIndex) error {
+	w.syncMutex.Lock()
+	defer w.syncMutex.Unlock()
+
+	log.Info("Bootstrap: External Nethermind client is uninitialized, internal Geth client is initialized",
+		"internalHead", intRes)
+
+	if w.consensus == nil {
+		return fmt.Errorf("consensus client not available for bootstrap initialization")
+	}
+
+	// Cast consensus to get access to transaction streamer
+	arbNode, ok := w.consensus.(*arbnode.Node)
+	if !ok {
+		return fmt.Errorf("consensus client is not an arbnode.Node, cannot access init message")
+	}
+
+	// Get the original init message at index 0 to extract the correct InitialL1BaseFee
+	initMessage, err := arbNode.TxStreamer.GetMessage(0)
+	if err != nil {
+		return fmt.Errorf("failed to get init message from consensus: %w", err)
+	}
+
+	// Parse the init message to get the original InitialL1BaseFee and chain config
+	parsedInitMessage, err := initMessage.Message.ParseInitMessage()
+	if err != nil {
+		return fmt.Errorf("failed to parse init message: %w", err)
+	}
+
+	log.Info("Bootstrap: Initializing external Nethermind client with DigestInitMessage",
+		"chainId", parsedInitMessage.ChainId,
+		"initialL1BaseFee", parsedInitMessage.InitialL1BaseFee,
+		"configSize", len(parsedInitMessage.SerializedChainConfig))
+
+	// Call DigestInitMessage on the external Nethermind client with the original parameters
+	result, err := w.nethermindExecutionClient.DigestInitMessage(ctx, parsedInitMessage.InitialL1BaseFee, parsedInitMessage.SerializedChainConfig)
+	if err != nil {
+		return fmt.Errorf("failed to initialize external Nethermind client with DigestInitMessage: %w", err)
+	}
+
+	log.Info("Bootstrap: Successfully initialized external Nethermind client",
+		"result", result)
+
+	return nil
+}
+
 func compare[T any](op string, intRes T, intErr error, extRes T, extErr error) error {
 	switch {
 	case intErr != nil && extErr != nil:
@@ -91,6 +156,211 @@ func compare[T any](op string, intRes T, intErr error, extRes T, extErr error) e
 		}
 	}
 	return nil
+}
+
+// synchronizeExecutionClients attempts to bring both execution clients to the same head message index
+// by replaying missing messages from the consensus client to the lagging client.
+func (w *compareExecutionClient) synchronizeExecutionClients(ctx context.Context, internalHead, externalHead arbutil.MessageIndex) error {
+	w.syncMutex.Lock()
+	defer w.syncMutex.Unlock()
+
+	if w.consensus == nil {
+		return fmt.Errorf("consensus client not available for synchronization")
+	}
+
+	// Cast consensus to get access to transaction streamer
+	arbNode, ok := w.consensus.(*arbnode.Node)
+	if !ok {
+		return fmt.Errorf("consensus client is not an arbnode.Node, cannot access message data")
+	}
+
+	var laggingClient, leadingClient execution.ExecutionClient
+	var leadingHead, laggingHead arbutil.MessageIndex
+	var laggingClientName, leadingClientName string
+
+	// Determine which client is lagging
+	if internalHead > externalHead {
+		laggingClient = w.nethermindExecutionClient
+		leadingClient = w.gethExecutionClient
+		laggingHead = externalHead
+		leadingHead = internalHead
+		laggingClientName = "external (Nethermind)"
+		leadingClientName = "internal (Geth)"
+		log.Info("Synchronization: External client is behind internal client",
+			"externalHead", externalHead,
+			"internalHead", internalHead,
+			"messageGap", internalHead-externalHead)
+	} else if externalHead > internalHead {
+		laggingClient = w.gethExecutionClient
+		leadingClient = w.nethermindExecutionClient
+		laggingHead = internalHead
+		leadingHead = externalHead
+		laggingClientName = "internal (Geth)"
+		leadingClientName = "external (Nethermind)"
+		log.Info("Synchronization: Internal client is behind external client",
+			"internalHead", internalHead,
+			"externalHead", externalHead,
+			"messageGap", externalHead-internalHead)
+	} else {
+		// Heads are equal, no synchronization needed
+		return nil
+	}
+
+	// Check if consensus client has the required messages
+	consensusHeadIdx, err := arbNode.TxStreamer.GetHeadMessageIndex()
+	if err != nil {
+		log.Warn("Synchronization: Failed to get consensus head message index",
+			"err", err)
+		return fmt.Errorf("failed to get consensus head message index: %w", err)
+	}
+
+	// If consensus doesn't have all the messages we need, we can't synchronize yet
+	if consensusHeadIdx < leadingHead {
+		log.Info("Synchronization: Consensus client doesn't have all required messages yet, skipping synchronization",
+			"consensusHead", consensusHeadIdx,
+			"leadingHead", leadingHead,
+			"client", laggingClientName,
+			"messageGap", leadingHead-laggingHead)
+		return fmt.Errorf("consensus client only has messages up to %d, but need messages up to %d", consensusHeadIdx, leadingHead)
+	}
+
+	// Replay messages from laggingHead+1 to leadingHead
+	messagesToReplay := leadingHead - laggingHead
+	log.Info("Synchronization: Starting message replay",
+		"client", laggingClientName,
+		"fromIndex", laggingHead+1,
+		"toIndex", leadingHead,
+		"messageCount", messagesToReplay,
+		"consensusHead", consensusHeadIdx)
+
+	syncStart := time.Now()
+	var successfulReplays arbutil.MessageIndex
+
+	for msgIdx := laggingHead + 1; msgIdx <= leadingHead; msgIdx++ {
+		msg, err := arbNode.TxStreamer.GetMessage(msgIdx)
+		if err != nil {
+			log.Error("Synchronization: Failed to retrieve message from consensus",
+				"messageIndex", msgIdx,
+				"consensusHead", consensusHeadIdx,
+				"err", err)
+			return fmt.Errorf("failed to get message %d from consensus (consensus head: %d): %w", msgIdx, consensusHeadIdx, err)
+		}
+
+		// Replay message on lagging client
+		log.Debug("Synchronization: Replaying message",
+			"client", laggingClientName,
+			"messageIndex", msgIdx)
+
+		laggingResult := laggingClient.DigestMessage(msgIdx, msg, nil)
+		leadingResult := leadingClient.ResultAtMessageIndex(msgIdx)
+
+		result := comparePromises(
+			w.fatalErrChan,
+			fmt.Sprintf("Synchronization: leading client %s and lagging client %s", leadingClientName, laggingClientName),
+			leadingResult,
+			laggingResult,
+		)
+
+		_, err = result.Await(ctx)
+		if err != nil {
+			log.Error("Synchronization: Failed to validate message result",
+				"messageIndex", msgIdx,
+				"err", err)
+			return fmt.Errorf("failed to validate message result: %w", err)
+		}
+
+		successfulReplays++
+
+		// Log progress every 10 messages or at the end
+		if successfulReplays%10 == 0 || msgIdx == leadingHead {
+			log.Info("Synchronization: Progress update",
+				"client", laggingClientName,
+				"replayed", successfulReplays,
+				"total", messagesToReplay,
+				"currentIndex", msgIdx,
+				"elapsed", time.Since(syncStart))
+		}
+	}
+
+	log.Info("Synchronization: Message replay completed successfully",
+		"client", laggingClientName,
+		"replayedMessages", successfulReplays,
+		"totalElapsed", time.Since(syncStart))
+
+	return nil
+}
+
+func (w *compareExecutionClient) compareHeadMessageIndexWithSync(
+	ctx context.Context,
+	internal containers.PromiseInterface[arbutil.MessageIndex],
+	external containers.PromiseInterface[arbutil.MessageIndex],
+) containers.PromiseInterface[arbutil.MessageIndex] {
+	promise := containers.NewPromise[arbutil.MessageIndex](nil)
+	go func() {
+		awaitCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		defer cancel()
+
+		intRes, intErr := internal.Await(awaitCtx)
+		extRes, extErr := external.Await(awaitCtx)
+
+		if w.isBootstrapCase(intErr, extErr) {
+			log.Info("Bootstrap case detected: attempting to initialize external Nethermind client")
+			if bootstrapErr := w.handleBootstrapInitialization(ctx, intRes); bootstrapErr != nil {
+				log.Error("Bootstrap initialization failed", "err", bootstrapErr)
+				// Continue with normal comparison to log the error
+			} else {
+				log.Info("Bootstrap initialization successful, will retry on next HeadMessageIndex call")
+				// Return the internal result for now, next call should work
+				promise.Produce(intRes)
+				return
+			}
+		}
+
+		if intErr == nil && extErr == nil && intRes != extRes {
+			log.Warn("Synchronization: Head message index mismatch detected",
+				"internalHead", intRes,
+				"externalHead", extRes,
+				"attempting", "synchronization")
+
+			// Attempt synchronization
+			if syncErr := w.synchronizeExecutionClients(ctx, intRes, extRes); syncErr != nil {
+				if strings.Contains(syncErr.Error(), "failed to validate message result") {
+					log.Error("Synchronization: Execution mismatch detected during synchronization - stopping",
+						"err", syncErr)
+					// Send to fatal error channel for graceful shutdown
+					select {
+					case w.fatalErrChan <- fmt.Errorf("compareExecutionClient synchronization: %s", syncErr.Error()):
+					default:
+						log.Error("Failed to send synchronization error to fatal channel", "err", syncErr)
+					}
+					promise.ProduceError(syncErr)
+					return
+				} else {
+					log.Warn("Synchronization: Cannot synchronize execution clients at this time",
+						"err", syncErr,
+						"reason", "will retry when consensus client catches up")
+				}
+			} else {
+				log.Info("Synchronization: Successfully synchronized execution clients")
+				// Return the leading head as the result since both should now be synchronized
+				if intRes > extRes {
+					promise.Produce(intRes)
+				} else {
+					promise.Produce(extRes)
+				}
+				return
+			}
+		}
+
+		// Perform normal comparison
+		if err := compare("HeadMessageIndex", intRes, intErr, extRes, extErr); err != nil {
+			log.Error("Non-fatal comparison error", "operation", "HeadMessageIndex", "err", err)
+			promise.Produce(intRes)
+		} else {
+			promise.Produce(intRes)
+		}
+	}()
+	return &promise
 }
 
 func (w *compareExecutionClient) DigestMessage(index arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata, msgForPrefetch *arbostypes.MessageWithMetadata) containers.PromiseInterface[*execution.MessageResult] {
@@ -125,7 +395,9 @@ func (w *compareExecutionClient) HeadMessageIndex() containers.PromiseInterface[
 	log.Info("CompareExecutionClient: HeadMessageIndex")
 	internal := w.gethExecutionClient.HeadMessageIndex()
 	external := w.nethermindExecutionClient.HeadMessageIndex()
-	result := comparePromises(nil, "HeadMessageIndex", internal, external)
+
+	// Use synchronization-aware comparison for HeadMessageIndex
+	result := w.compareHeadMessageIndexWithSync(context.Background(), internal, external)
 	log.Info("CompareExecutionClient: HeadMessageIndex completed", "elapsed", time.Since(start))
 	return result
 }
@@ -330,6 +602,7 @@ func (w *compareExecutionClient) ArbOSVersionForMessageIndex(msgIdx arbutil.Mess
 }
 
 func (w *compareExecutionClient) SetConsensusClient(consensus execution.FullConsensusClient) {
+	w.consensus = consensus
 	w.gethExecutionClient.SetConsensusClient(consensus)
 }
 

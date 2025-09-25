@@ -58,7 +58,7 @@ type seqDelayedParams struct {
 }
 
 type InitMessageDigester interface {
-	DigestInitMessage(ctx context.Context, initialL1BaseFee *big.Int, serializedChainConfig []byte) *execution.MessageResult
+	DigestInitMessage(ctx context.Context, initialL1BaseFee *big.Int, serializedChainConfig []byte) (*execution.MessageResult, error)
 }
 
 type fakeRemoteExecutionRpcClient struct{}
@@ -67,8 +67,8 @@ func NewFakeRemoteExecutionRpcClient() *fakeRemoteExecutionRpcClient {
 	return &fakeRemoteExecutionRpcClient{}
 }
 
-func (n *fakeRemoteExecutionRpcClient) DigestInitMessage(ctx context.Context, initialL1BaseFee *big.Int, serializedChainConfig []byte) *execution.MessageResult {
-	return &execution.MessageResult{}
+func (n *fakeRemoteExecutionRpcClient) DigestInitMessage(ctx context.Context, initialL1BaseFee *big.Int, serializedChainConfig []byte) (*execution.MessageResult, error) {
+	return &execution.MessageResult{}, nil
 }
 
 var (
@@ -103,7 +103,7 @@ func (c *nethRpcClient) Close() {
 	c.client.Close()
 }
 
-func (c *nethRpcClient) DigestMessage(ctx context.Context, index arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata, msgForPrefetch *arbostypes.MessageWithMetadata) *execution.MessageResult {
+func (c *nethRpcClient) DigestMessage(ctx context.Context, index arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata, msgForPrefetch *arbostypes.MessageWithMetadata) (*execution.MessageResult, error) {
 	params := messageParams{
 		Index:              index,
 		Message:            msg,
@@ -119,13 +119,13 @@ func (c *nethRpcClient) DigestMessage(ctx context.Context, index arbutil.Message
 	var result execution.MessageResult
 	if err := c.client.CallContext(ctx, &result, "DigestMessage", params); err != nil {
 		log.Error("Failed to call DigestMessage", "error", err)
-		return nil
+		return nil, fmt.Errorf("failed to call DigestMessage at index %d: %w", index, err)
 	}
 
-	return &result
+	return &result, nil
 }
 
-func (c *nethRpcClient) DigestInitMessage(ctx context.Context, initialL1BaseFee *big.Int, serializedChainConfig []byte) *execution.MessageResult {
+func (c *nethRpcClient) DigestInitMessage(ctx context.Context, initialL1BaseFee *big.Int, serializedChainConfig []byte) (*execution.MessageResult, error) {
 	var result execution.MessageResult
 
 	params := initializeMessageParams{
@@ -139,10 +139,11 @@ func (c *nethRpcClient) DigestInitMessage(ctx context.Context, initialL1BaseFee 
 		"len(serializedChainConfig)", len(serializedChainConfig))
 
 	if err := c.client.CallContext(ctx, &result, "DigestInitMessage", params); err != nil {
-		panic(fmt.Sprintf("failed to call DigestInitMessage: %v", err))
+		log.Error("Failed to call DigestInitMessage", "error", err)
+		return nil, fmt.Errorf("failed to call DigestInitMessage: %w", err)
 	}
 
-	return &result
+	return &result, nil
 }
 
 func (c *nethRpcClient) SetFinalityData(ctx context.Context, safeFinalityData *arbutil.FinalityData, finalizedFinalityData *arbutil.FinalityData, validatedFinalityData *arbutil.FinalityData) error {

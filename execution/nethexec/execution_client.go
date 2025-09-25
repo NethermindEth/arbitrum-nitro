@@ -36,9 +36,9 @@ func NewNethermindExecutionClient() (*nethermindExecutionClient, error) {
 func (p *nethermindExecutionClient) DigestMessage(index arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata, msgForPrefetch *arbostypes.MessageWithMetadata) containers.PromiseInterface[*execution.MessageResult] {
 	promise := containers.NewPromise[*execution.MessageResult](nil)
 	go func() {
-		res := p.rpcClient.DigestMessage(context.Background(), index, msg, msgForPrefetch)
-		if res == nil {
-			promise.ProduceError(fmt.Errorf("external DigestMessage returned nil"))
+		res, err := p.rpcClient.DigestMessage(context.Background(), index, msg, msgForPrefetch)
+		if err != nil {
+			promise.ProduceError(fmt.Errorf("external DigestMessage failed: %w", err))
 			return
 		}
 		promise.Produce(res)
@@ -230,20 +230,11 @@ func (w *nethermindExecutionClient) SetConsensusClient(consensus execution.FullC
 	// no-op until consensus path is implemented
 }
 
-func (w *nethermindExecutionClient) DigestInitMessage(ctx context.Context, initialL1BaseFee *big.Int, serializedChainConfig []byte) *execution.MessageResult {
+func (w *nethermindExecutionClient) DigestInitMessage(ctx context.Context, initialL1BaseFee *big.Int, serializedChainConfig []byte) (*execution.MessageResult, error) {
 	// Call DigestInitMessage on the external Nethermind client for proper initialization
 	return w.rpcClient.DigestInitMessage(ctx, initialL1BaseFee, serializedChainConfig)
 }
 
 func (w *nethermindExecutionClient) Initialize(ctx context.Context) error {
-	// For external Nethermind execution client, we need to ensure the RPC client is ready
-	// The RPC client was already created in NewNethermindExecutionClient, so we just need
-	// to verify it's working by doing a basic health check
-	if w.rpcClient == nil {
-		return fmt.Errorf("RPC client is not initialized")
-	}
-
-	// TODO: Add a health check RPC call to verify Nethermind is accessible
-	// For now, we'll return success to allow the test to proceed
-	return nil
+	return fmt.Errorf("Initialize not implemented")
 }
