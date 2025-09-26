@@ -62,8 +62,9 @@ func comparePromises[T any](fatalErrChan chan error, op string,
 		extRes, extErr := external.Await(ctx)
 
 		if err := compare(op, intRes, intErr, extRes, extErr); err != nil {
+			// Use non-blocking send to avoid goroutine leaks
 			select {
-			case fatalErrChan <- fmt.Errorf("compareExecutionClient %s: %s", op, err.Error()):
+			case fatalErrChan <- fmt.Errorf("compareExecutionClient %s: %w", op, err):
 				// Successfully sent - this is a fatal operation
 				promise.ProduceError(err)
 			default:
@@ -78,14 +79,24 @@ func comparePromises[T any](fatalErrChan chan error, op string,
 	return &promise
 }
 
+const bootstrapErrorMsg = "Failed to get latest header"
+
+// clientInfo holds information about an execution client for synchronization
+type clientInfo struct {
+	client execution.ExecutionClient
+	head   arbutil.MessageIndex
+	name   string
+}
+
 func (w *compareExecutionClient) isBootstrapCase(intErr, extErr error) bool {
 	// Check if external client has "Failed to get latest header" error (uninitialized)
 	// and internal client has a valid response (initialized)
-	extUninitialized := extErr != nil && strings.Contains(extErr.Error(), "Failed to get latest header")
-	intInitialized := intErr == nil
+	if intErr != nil || extErr == nil {
+		return false
+	}
 
 	// Bootstrap case: external client is uninitialized and internal client is initialized
-	return extUninitialized && intInitialized
+	return strings.Contains(extErr.Error(), bootstrapErrorMsg)
 }
 
 // handleBootstrapInitialization initializes the external Nethermind client using DigestInitMessage
@@ -139,9 +150,9 @@ func compare[T any](op string, intRes T, intErr error, extRes T, extErr error) e
 	switch {
 	case intErr != nil && extErr != nil:
 		return fmt.Errorf("both operations failed: internal=%v external=%v", intErr, extErr)
-	case intErr != nil && extErr == nil:
+	case intErr != nil:
 		return fmt.Errorf("internal operation failed: %v", intErr)
-	case intErr == nil && extErr != nil:
+	case extErr != nil:
 		return fmt.Errorf("external operation failed: %v", extErr)
 	default:
 		if !cmp.Equal(intRes, extRes) {
@@ -161,6 +172,11 @@ func compare[T any](op string, intRes T, intErr error, extRes T, extErr error) e
 // synchronizeExecutionClients attempts to bring both execution clients to the same head message index
 // by replaying missing messages from the consensus client to the lagging client.
 func (w *compareExecutionClient) synchronizeExecutionClients(ctx context.Context, internalHead, externalHead arbutil.MessageIndex) error {
+	// Early return if heads are equal
+	if internalHead == externalHead {
+		return nil
+	}
+
 	w.syncMutex.Lock()
 	defer w.syncMutex.Unlock()
 
@@ -174,107 +190,95 @@ func (w *compareExecutionClient) synchronizeExecutionClients(ctx context.Context
 		return fmt.Errorf("consensus client is not an arbnode.Node, cannot access message data")
 	}
 
-	var laggingClient, leadingClient execution.ExecutionClient
-	var leadingHead, laggingHead arbutil.MessageIndex
-	var laggingClientName, leadingClientName string
-
 	// Determine which client is lagging
+	var lagging, leading clientInfo
 	if internalHead > externalHead {
-		laggingClient = w.nethermindExecutionClient
-		leadingClient = w.gethExecutionClient
-		laggingHead = externalHead
-		leadingHead = internalHead
-		laggingClientName = "external (Nethermind)"
-		leadingClientName = "internal (Geth)"
+		lagging = clientInfo{w.nethermindExecutionClient, externalHead, "external (Nethermind)"}
+		leading = clientInfo{w.gethExecutionClient, internalHead, "internal (Geth)"}
 		log.Info("Synchronization: External client is behind internal client",
 			"externalHead", externalHead,
 			"internalHead", internalHead,
 			"messageGap", internalHead-externalHead)
-	} else if externalHead > internalHead {
-		laggingClient = w.gethExecutionClient
-		leadingClient = w.nethermindExecutionClient
-		laggingHead = internalHead
-		leadingHead = externalHead
-		laggingClientName = "internal (Geth)"
-		leadingClientName = "external (Nethermind)"
+	} else {
+		lagging = clientInfo{w.gethExecutionClient, internalHead, "internal (Geth)"}
+		leading = clientInfo{w.nethermindExecutionClient, externalHead, "external (Nethermind)"}
 		log.Info("Synchronization: Internal client is behind external client",
 			"internalHead", internalHead,
 			"externalHead", externalHead,
 			"messageGap", externalHead-internalHead)
-	} else {
-		// Heads are equal, no synchronization needed
-		return nil
 	}
 
 	// Check if consensus client has the required messages
 	consensusHeadIdx, err := arbNode.TxStreamer.GetHeadMessageIndex()
 	if err != nil {
-		log.Warn("Synchronization: Failed to get consensus head message index",
-			"err", err)
+		log.Warn("Synchronization: Failed to get consensus head message index", "err", err)
 		return fmt.Errorf("failed to get consensus head message index: %w", err)
 	}
 
 	// If consensus doesn't have all the messages we need, we can't synchronize yet
-	if consensusHeadIdx < leadingHead {
+	if consensusHeadIdx < leading.head {
 		log.Info("Synchronization: Consensus client doesn't have all required messages yet, skipping synchronization",
 			"consensusHead", consensusHeadIdx,
-			"leadingHead", leadingHead,
-			"client", laggingClientName,
-			"messageGap", leadingHead-laggingHead)
-		return fmt.Errorf("consensus client only has messages up to %d, but need messages up to %d", consensusHeadIdx, leadingHead)
+			"leadingHead", leading.head,
+			"client", lagging.name,
+			"messageGap", leading.head-lagging.head)
+		return fmt.Errorf("consensus client only has messages up to %d, but need messages up to %d", consensusHeadIdx, leading.head)
 	}
 
-	// Replay messages from laggingHead+1 to leadingHead
-	messagesToReplay := leadingHead - laggingHead
+	return w.replayMessages(ctx, arbNode, lagging, leading)
+}
+
+// replayMessages replays messages from lagging client to leading client head
+func (w *compareExecutionClient) replayMessages(ctx context.Context, arbNode *arbnode.Node, lagging, leading clientInfo) error {
+	messagesToReplay := leading.head - lagging.head
 	log.Info("Synchronization: Starting message replay",
-		"client", laggingClientName,
-		"fromIndex", laggingHead+1,
-		"toIndex", leadingHead,
-		"messageCount", messagesToReplay,
-		"consensusHead", consensusHeadIdx)
+		"client", lagging.name,
+		"fromIndex", lagging.head+1,
+		"toIndex", leading.head,
+		"messageCount", messagesToReplay)
 
 	syncStart := time.Now()
 	var successfulReplays arbutil.MessageIndex
 
-	for msgIdx := laggingHead + 1; msgIdx <= leadingHead; msgIdx++ {
+	for msgIdx := lagging.head + 1; msgIdx <= leading.head; msgIdx++ {
+		// Check for context cancellation
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("synchronization cancelled: %w", ctx.Err())
+		default:
+		}
+
 		msg, err := arbNode.TxStreamer.GetMessage(msgIdx)
 		if err != nil {
 			log.Error("Synchronization: Failed to retrieve message from consensus",
-				"messageIndex", msgIdx,
-				"consensusHead", consensusHeadIdx,
-				"err", err)
-			return fmt.Errorf("failed to get message %d from consensus (consensus head: %d): %w", msgIdx, consensusHeadIdx, err)
+				"messageIndex", msgIdx, "err", err)
+			return fmt.Errorf("failed to get message %d from consensus: %w", msgIdx, err)
 		}
 
 		// Replay message on lagging client
-		log.Debug("Synchronization: Replaying message",
-			"client", laggingClientName,
-			"messageIndex", msgIdx)
+		log.Debug("Synchronization: Replaying message", "client", lagging.name, "messageIndex", msgIdx)
 
-		laggingResult := laggingClient.DigestMessage(msgIdx, msg, nil)
-		leadingResult := leadingClient.ResultAtMessageIndex(msgIdx)
+		laggingResult := lagging.client.DigestMessage(msgIdx, msg, nil)
+		leadingResult := leading.client.ResultAtMessageIndex(msgIdx)
 
 		result := comparePromises(
 			w.fatalErrChan,
-			fmt.Sprintf("Synchronization: leading client %s and lagging client %s", leadingClientName, laggingClientName),
+			fmt.Sprintf("Synchronization: leading client %s and lagging client %s", leading.name, lagging.name),
 			leadingResult,
 			laggingResult,
 		)
 
-		_, err = result.Await(ctx)
-		if err != nil {
-			log.Error("Synchronization: Failed to validate message result",
-				"messageIndex", msgIdx,
-				"err", err)
+		if _, err = result.Await(ctx); err != nil {
+			log.Error("Synchronization: Failed to validate message result", "messageIndex", msgIdx, "err", err)
 			return fmt.Errorf("failed to validate message result: %w", err)
 		}
 
 		successfulReplays++
 
 		// Log progress every 10 messages or at the end
-		if successfulReplays%10 == 0 || msgIdx == leadingHead {
+		if successfulReplays%10 == 0 || msgIdx == leading.head {
 			log.Info("Synchronization: Progress update",
-				"client", laggingClientName,
+				"client", lagging.name,
 				"replayed", successfulReplays,
 				"total", messagesToReplay,
 				"currentIndex", msgIdx,
@@ -283,11 +287,19 @@ func (w *compareExecutionClient) synchronizeExecutionClients(ctx context.Context
 	}
 
 	log.Info("Synchronization: Message replay completed successfully",
-		"client", laggingClientName,
+		"client", lagging.name,
 		"replayedMessages", successfulReplays,
 		"totalElapsed", time.Since(syncStart))
 
 	return nil
+}
+
+// isFatalSyncError determines if a synchronization error should cause fatal shutdown
+func (w *compareExecutionClient) isFatalSyncError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "failed to validate message result")
 }
 
 func (w *compareExecutionClient) compareHeadMessageIndexWithSync(
@@ -324,30 +336,28 @@ func (w *compareExecutionClient) compareHeadMessageIndexWithSync(
 
 			// Attempt synchronization
 			if syncErr := w.synchronizeExecutionClients(ctx, intRes, extRes); syncErr != nil {
-				if strings.Contains(syncErr.Error(), "failed to validate message result") {
-					log.Error("Synchronization: Execution mismatch detected during synchronization - stopping",
-						"err", syncErr)
+				if w.isFatalSyncError(syncErr) {
+					log.Error("Synchronization: Execution mismatch detected during synchronization - stopping", "err", syncErr)
 					// Send to fatal error channel for graceful shutdown
 					select {
-					case w.fatalErrChan <- fmt.Errorf("compareExecutionClient synchronization: %s", syncErr.Error()):
+					case w.fatalErrChan <- fmt.Errorf("compareExecutionClient synchronization: %w", syncErr):
 					default:
 						log.Error("Failed to send synchronization error to fatal channel", "err", syncErr)
 					}
 					promise.ProduceError(syncErr)
 					return
-				} else {
-					log.Warn("Synchronization: Cannot synchronize execution clients at this time",
-						"err", syncErr,
-						"reason", "will retry when consensus client catches up")
 				}
+
+				log.Warn("Synchronization: Cannot synchronize execution clients at this time",
+					"err", syncErr, "reason", "will retry when consensus client catches up")
 			} else {
 				log.Info("Synchronization: Successfully synchronized execution clients")
 				// Return the leading head as the result since both should now be synchronized
-				if intRes > extRes {
-					promise.Produce(intRes)
-				} else {
-					promise.Produce(extRes)
+				leadingHead := intRes
+				if extRes > intRes {
+					leadingHead = extRes
 				}
+				promise.Produce(leadingHead)
 				return
 			}
 		}
@@ -403,6 +413,9 @@ func (w *compareExecutionClient) HeadMessageIndex() containers.PromiseInterface[
 }
 
 func (w *compareExecutionClient) ResultAtMessageIndex(index arbutil.MessageIndex) containers.PromiseInterface[*execution.MessageResult] {
+	w.syncMutex.Lock()
+	defer w.syncMutex.Unlock()
+
 	start := time.Now()
 	log.Info("CompareExecutionClient: ResultAtMessageIndex", "index", index)
 	internal := w.gethExecutionClient.ResultAtMessageIndex(index)
@@ -530,15 +543,15 @@ func (w *compareExecutionClient) SequenceDelayedMessage(message *arbostypes.L1In
 	if err := compare("SequenceDelayedMessage", struct{}{}, internalErr, struct{}{}, externalErr); err != nil {
 		// Send to fatal error channel for graceful shutdown
 		select {
-		case w.fatalErrChan <- fmt.Errorf("compareExecutionClient SequenceDelayedMessage: %s", err.Error()):
+		case w.fatalErrChan <- fmt.Errorf("compareExecutionClient SequenceDelayedMessage: %w", err):
 		default:
 			log.Error("Failed to send comparison error to fatal channel", "err", err)
 		}
-
 		return err
 	}
 
-	log.Info("CompareExecutionClient: SequenceDelayedMessage completed", "delayedSeqNum", delayedSeqNum, "err", internalErr, "elapsed", time.Since(start))
+	log.Info("CompareExecutionClient: SequenceDelayedMessage completed",
+		"delayedSeqNum", delayedSeqNum, "err", internalErr, "elapsed", time.Since(start))
 	return internalErr
 }
 
