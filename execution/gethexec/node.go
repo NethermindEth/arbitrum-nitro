@@ -487,8 +487,39 @@ func (n *ExecutionNode) NextDelayedMessageNumber() (uint64, error) {
 func (n *ExecutionNode) SequenceDelayedMessage(message *arbostypes.L1IncomingMessage, delayedSeqNum uint64) error {
 	return n.ExecEngine.SequenceDelayedMessage(message, delayedSeqNum)
 }
+
+const maxRetries = 3
+const retryDelay = 100 * time.Millisecond
+
 func (n *ExecutionNode) ResultAtMessageIndex(msgIdx arbutil.MessageIndex) containers.PromiseInterface[*execution.MessageResult] {
-	return containers.NewReadyPromise(n.ExecEngine.ResultAtMessageIndex(msgIdx))
+	promise := containers.NewPromise[*execution.MessageResult](nil)
+	go func() {
+		var res *execution.MessageResult
+		var err error
+
+		for attempt := range maxRetries {
+			res, err = n.ExecEngine.ResultAtMessageIndex(msgIdx)
+			if err == nil {
+				promise.Produce(res)
+				return
+			}
+
+			// Only retry on ResultNotFound errors
+			if !errors.Is(err, ResultNotFound) {
+				promise.ProduceError(err)
+				return
+			}
+
+			// Don't sleep after the last attempt
+			if attempt < maxRetries {
+				time.Sleep(retryDelay)
+			}
+		}
+
+		// All retries exhausted
+		promise.ProduceError(err)
+	}()
+	return &promise
 }
 func (n *ExecutionNode) ArbOSVersionForMessageIndex(msgIdx arbutil.MessageIndex) (uint64, error) {
 	return n.ExecEngine.ArbOSVersionForMessageIndex(msgIdx)
