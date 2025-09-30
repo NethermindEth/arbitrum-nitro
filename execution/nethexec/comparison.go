@@ -2,6 +2,7 @@ package nethexec
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -111,12 +112,8 @@ func (c *comparator) compareError(
 func compare[T any](op string, internal T, internalErr error, external T, externalErr error, fatalErrChan chan error, logger *slog.Logger) error {
 	var err error
 	switch {
-	case internalErr != nil && externalErr != nil:
-		err = &ComparisonError{
-			Operation: op,
-			Internal:  internalErr,
-			External:  externalErr,
-		}
+	case errors.Is(internalErr, externalErr):
+		return internalErr
 	case internalErr != nil:
 		err = &ComparisonError{
 			Operation: op,

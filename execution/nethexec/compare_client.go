@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"runtime"
-	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -38,7 +37,6 @@ type compareExecutionClient struct {
 	comparator   *comparator
 	syncService  *syncService
 	logger       *slog.Logger
-	syncOnce     sync.Once
 }
 
 // Ensure interface compliance
@@ -73,86 +71,52 @@ func NewCompareExecutionClient(
 	}
 }
 
-// compareHeadMessageIndexWithSync handles head message index comparison with synchronization
-func (c *compareExecutionClient) compareHeadMessageIndexWithSync(
-	internal containers.PromiseInterface[arbutil.MessageIndex],
-	external containers.PromiseInterface[arbutil.MessageIndex],
-) containers.PromiseInterface[arbutil.MessageIndex] {
-	ctx, cancel := context.WithCancel(c.ctx)
-	promise := containers.NewPromise[arbutil.MessageIndex](cancel)
+// synchronizeClients performs upfront synchronization during startup
+func (c *compareExecutionClient) synchronizeClients(ctx context.Context) error {
+	c.logger.Info("Starting client synchronization")
 
-	go func() {
-		intRes, intErr := internal.Await(ctx)
-		extRes, extErr := external.Await(ctx)
+	internal := c.gethClient.HeadMessageIndex()
+	external := c.nethClient.HeadMessageIndex()
 
-		if c.syncService.isBootstrapCase(intErr, extErr) {
-			c.logger.Info("Bootstrap case detected")
-			if bootstrapErr := c.syncService.handleBootstrapInitialization(ctx, c.nethClient, intRes); bootstrapErr != nil {
-				c.logger.Error("Bootstrap initialization failed", "error", bootstrapErr)
-			} else {
-				c.logger.Info("Bootstrap initialization successful")
-				promise.Produce(intRes)
-				return
-			}
+	intRes, intErr := internal.Await(ctx)
+	extRes, extErr := external.Await(ctx)
+
+	// Handle cancellation
+	if ctx.Err() != nil {
+		return fmt.Errorf("synchronization cancelled: %w", ctx.Err())
+	}
+
+	// Handle bootstrap case
+	if c.syncService.isBootstrapCase(intErr, extErr) {
+		c.logger.Info("Bootstrap case detected, initializing external client")
+		if err := c.syncService.handleBootstrapInitialization(ctx, c.nethClient); err != nil {
+			return fmt.Errorf("bootstrap initialization failed: %w", err)
 		}
+		c.logger.Info("Bootstrap initialization completed")
+	}
 
-		if intErr == nil && extErr == nil && intRes != extRes {
-			c.logger.Warn("Head message index mismatch",
-				"internal_head", intRes,
-				"external_head", extRes)
+	// Synchronize if heads differ
+	if intRes != extRes {
+		c.logger.Info("Head message index mismatch detected, starting synchronization",
+			"internal_head", intRes,
+			"external_head", extRes)
 
-			if syncErr := c.syncService.synchronizeExecutionClients(ctx, c.gethClient, c.nethClient, intRes, extRes); syncErr != nil {
-				if c.syncService.isFatalSyncError(syncErr) {
-					c.logger.Error("Fatal synchronization error", "error", syncErr)
-					select {
-					case c.fatalErrChan <- fmt.Errorf("compareExecutionClient synchronization: %w", syncErr):
-					default:
-						c.logger.Error("Failed to send synchronization error to fatal channel", "error", syncErr)
-					}
-					promise.ProduceError(syncErr)
-					return
-				}
-				c.logger.Warn("Synchronization temporarily failed", "error", syncErr)
-			} else {
-				c.logger.Info("Synchronization successful")
-				leadingHead := max(intRes, extRes)
-				promise.Produce(leadingHead)
-				return
-			}
+		if err := c.syncService.synchronizeExecutionClients(ctx, c.gethClient, c.nethClient, intRes, extRes); err != nil {
+			return fmt.Errorf("client synchronization failed: %w", err)
 		}
+		c.logger.Info("Client synchronization completed successfully")
+	} else {
+		c.logger.Info("Clients already synchronized",
+			"head_message_index", intRes)
+	}
 
-		if err := c.comparator.compareMessageIndex("HeadMessageIndex", intRes, intErr, extRes, extErr); err != nil {
-			c.logger.Warn("Non-fatal comparison error", "operation", "HeadMessageIndex", "error", err)
-		}
-		promise.Produce(intRes)
-	}()
-
-	return &promise
+	return nil
 }
 
 // Implementation of ExecutionClient interface methods
 
 func (c *compareExecutionClient) DigestMessage(index arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata, msgForPrefetch *arbostypes.MessageWithMetadata) containers.PromiseInterface[*execution.MessageResult] {
 	start := time.Now()
-
-	c.syncOnce.Do(func() {
-		c.logger.Info("Running initial synchronization")
-		ctx := c.ctx
-
-		internal := c.gethClient.HeadMessageIndex()
-		external := c.nethClient.HeadMessageIndex()
-
-		syncResult := c.compareHeadMessageIndexWithSync(internal, external)
-		if _, err := syncResult.Await(ctx); err != nil {
-			c.logger.Error("Initial synchronization failed", "error", err)
-			select {
-			case c.fatalErrChan <- fmt.Errorf("compareExecutionClient synchronization: %w", err):
-			default:
-			}
-		} else {
-			c.logger.Info("Initial synchronization completed")
-		}
-	})
 
 	internal := c.gethClient.DigestMessage(index, msg, msgForPrefetch)
 	external := c.nethClient.DigestMessage(index, msg, msgForPrefetch)
@@ -193,6 +157,45 @@ func (c *compareExecutionClient) HeadMessageIndex() containers.PromiseInterface[
 
 	c.logger.Debug("HeadMessageIndex completed", "elapsed", time.Since(start))
 	return result
+}
+
+func (c *compareExecutionClient) compareHeadMessageIndexWithSync(
+	internal containers.PromiseInterface[arbutil.MessageIndex],
+	external containers.PromiseInterface[arbutil.MessageIndex],
+) containers.PromiseInterface[arbutil.MessageIndex] {
+
+	promise := containers.NewPromise[arbutil.MessageIndex](nil)
+
+	go func() {
+		intRes, intErr := internal.Await(c.ctx)
+		extRes, extErr := external.Await(c.ctx)
+
+		if err := c.comparator.compareError("compareHeadMessageIndexWithSync", intErr, extErr); err != nil {
+			c.logger.Error("compareHeadMessageIndexWithSync", "error", err)
+			promise.ProduceError(err)
+			return
+		}
+
+		if intErr != nil {
+			promise.ProduceError(intErr)
+			return
+		}
+
+		if intRes != extRes {
+			c.logger.Info("Head message index mismatch detected, starting synchronization",
+				"internal_head", intRes,
+				"external_head", extRes)
+			if err := c.syncService.synchronizeExecutionClients(c.ctx, c.gethClient, c.nethClient, intRes, extRes); err != nil {
+				c.logger.Error("client synchronization failed", "error", err)
+				promise.ProduceError(err)
+				return
+			}
+		}
+
+		promise.Produce(max(intRes, extRes))
+	}()
+
+	return &promise
 }
 
 func (c *compareExecutionClient) ResultAtMessageIndex(index arbutil.MessageIndex) containers.PromiseInterface[*execution.MessageResult] {
@@ -296,9 +299,22 @@ func (c *compareExecutionClient) MaintenanceStatus() containers.PromiseInterface
 
 func (c *compareExecutionClient) Start(ctx context.Context) error {
 	start := time.Now()
-	err := c.gethClient.Start(ctx)
-	c.logger.Info("Start completed", "elapsed", time.Since(start), "error", err)
-	return err
+	c.logger.Info("Starting comparison execution client")
+
+	// Start the internal geth client first
+	if err := c.gethClient.Start(ctx); err != nil {
+		return fmt.Errorf("failed to start internal geth client: %w", err)
+	}
+	c.logger.Info("Internal geth client started successfully")
+
+	// Perform upfront synchronization with proper cancellation support
+	if err := c.synchronizeClients(ctx); err != nil {
+		return fmt.Errorf("client synchronization failed during startup: %w", err)
+	}
+
+	c.logger.Info("Comparison execution client started successfully",
+		"elapsed", time.Since(start))
+	return nil
 }
 
 func (c *compareExecutionClient) StopAndWait() {

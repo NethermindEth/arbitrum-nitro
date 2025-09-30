@@ -66,9 +66,8 @@ func (s *syncService) isBootstrapCase(intErr, extErr error) bool {
 }
 
 // handleBootstrapInitialization initializes the external Nethermind client using DigestInitMessage
-func (s *syncService) handleBootstrapInitialization(ctx context.Context, nethClient *nethermindExecutionClient, intRes arbutil.MessageIndex) error {
-	s.logger.Info("Bootstrap initialization starting",
-		"internal_head", intRes)
+func (s *syncService) handleBootstrapInitialization(ctx context.Context, nethClient *nethermindExecutionClient) error {
+	s.logger.Info("Bootstrap initialization starting")
 
 	consensus := s.getConsensus()
 	if consensus == nil {
@@ -251,10 +250,4 @@ func (s *syncService) replayMessages(ctx context.Context, arbNode *arbnode.Node,
 
 	s.lastSync.Store(time.Now().Unix())
 	return nil
-}
-
-// isFatalSyncError determines if a synchronization error should cause fatal shutdown
-func (s *syncService) isFatalSyncError(err error) bool {
-	var syncErr *SyncError
-	return errors.As(err, &syncErr) && strings.Contains(syncErr.Error(), "message validation failed")
 }
