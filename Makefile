@@ -343,7 +343,9 @@ run-follower-compare-sepolia:
         --parent-chain.blob-client.beacon-url=http://209.127.228.66/consensus/6ekWpL9BXR0aLXrd \
 		--chain.id=421614 \
 		--execution.forwarding-target null \
-		--execution.enable-prefetch-block=false
+		--execution.enable-prefetch-block=false \
+		--http.addr=0.0.0.0 \
+		--http.port=8747
 
 .PHONY: clean-run-follower-compare-sepolia
 clean-run-follower-compare-sepolia: clean-follower run-follower-compare-sepolia

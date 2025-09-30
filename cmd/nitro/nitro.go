@@ -577,7 +577,7 @@ func mainImpl() int {
 			return 1
 		}
 		log.Info("Created nethermind execution client")
-		execNode = nethexec.NewCompareExecutionClient(gethNode, nmExec, fatalErrChan)
+		execNode = nethexec.NewCompareExecutionClient(ctx, gethNode, nmExec, fatalErrChan)
 		log.Info("Created compare execution client")
 	}
 
@@ -719,6 +719,17 @@ func mainImpl() int {
 		}
 	}
 
+	// Set up signal handling BEFORE starting nodes to enable cancellation during startup
+	sigint := make(chan os.Signal, 1)
+	signal.Notify(sigint, os.Interrupt, syscall.SIGTERM)
+
+	// Start signal handler in separate goroutine to cancel context on SIGINT
+	go func() {
+		<-sigint
+		log.Info("received SIGINT, cancelling operations...")
+		cancelFunc()
+	}()
+
 	if valNode != nil {
 		err = valNode.Start(ctx)
 		if err != nil {
@@ -737,9 +748,6 @@ func mainImpl() int {
 		deferFuncs = []func(){func() { currentNode.StopAndWait() }}
 	}
 
-	sigint := make(chan os.Signal, 1)
-	signal.Notify(sigint, os.Interrupt, syscall.SIGTERM)
-
 	if err == nil && nodeConfig.Init.IsReorgRequested() {
 		err = initReorg(nodeConfig.Init, chainInfo.ChainConfig, currentNode.InboxTracker)
 		if err != nil {
@@ -757,12 +765,11 @@ func mainImpl() int {
 	err = nil
 	select {
 	case err = <-fatalErrChan:
-	case <-sigint:
-		// If there was both a sigint and a fatal error, we want to log the fatal error
+	case <-ctx.Done():
 		select {
 		case err = <-fatalErrChan:
 		default:
-			log.Info("shutting down because of sigint")
+			log.Info("shutting down because of cancelled context (SIGINT)")
 		}
 	}
 

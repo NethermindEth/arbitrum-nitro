@@ -907,8 +907,9 @@ func openInitializeChainDb(ctx context.Context, stack *node.Node, config *NodeCo
 		}
 
 		// Trigger genesis block building at Nethermind
-		_ = initDigester.DigestInitMessage(ctx, parsedInitMessage.InitialL1BaseFee, parsedInitMessage.SerializedChainConfig)
-
+		if _, err = initDigester.DigestInitMessage(ctx, parsedInitMessage.InitialL1BaseFee, parsedInitMessage.SerializedChainConfig); err != nil {
+			return chainDb, nil, err
+		}
 		l2BlockChain, err = gethexec.WriteOrTestBlockChain(chainDb, cacheConfig, initDataReader, chainConfig, genesisArbOSInit, tracer, parsedInitMessage, &config.Execution.TxIndexer, config.Init.AccountsPerSync)
 		if err != nil {
 			return chainDb, nil, err
