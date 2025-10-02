@@ -313,7 +313,6 @@ docker:
 run-follower-compare-local:
 	@echo "Starting Nitro sequencer follower..."
 	CGO_LDFLAGS=-Wl,-no_warn_duplicate_libraries \
-	PR_EXIT_AFTER_GENESIS=false \
 	PR_IGNORE_CALLSTACK=false \
 	PR_NETH_RPC_CLIENT_URL=http://localhost:20545 \
 	PR_OVERRIDE_FORWARDER_URL=ws://localhost:8548 \
@@ -333,7 +332,6 @@ clean-run-follower-compare-local: clean-follower run-follower-compare-local
 run-follower-compare-sepolia:
 	@echo "Starting Nitro sequencer follower (Sepolia with Nethermind)..."
 	CGO_LDFLAGS=-Wl,-no_warn_duplicate_libraries \
-	PR_EXIT_AFTER_GENESIS=false \
 	PR_IGNORE_CALLSTACK=false \
 	PR_NETH_RPC_CLIENT_URL=http://localhost:20545 \
 	PR_EXECUTION_MODE=compare \
@@ -343,15 +341,42 @@ run-follower-compare-sepolia:
         --parent-chain.blob-client.beacon-url=http://209.127.228.66/consensus/6ekWpL9BXR0aLXrd \
 		--chain.id=421614 \
 		--execution.forwarding-target null \
-		--execution.enable-prefetch-block=false
+		--http.addr=0.0.0.0 \
+		--http.port=8747
 
 .PHONY: clean-run-follower-compare-sepolia
 clean-run-follower-compare-sepolia: clean-follower run-follower-compare-sepolia
+
+.PHONY: run-follower-compare-mainnet
+run-follower-compare-mainnet: build-replay-env
+	@echo "Starting Nitro sequencer follower (Arbitrum One with Nethermind)..."
+	CGO_LDFLAGS=-Wl,-no_warn_duplicate_libraries \
+	PR_IGNORE_CALLSTACK=false \
+	PR_NETH_RPC_CLIENT_URL=http://localhost:20545 \
+	PR_EXECUTION_MODE=compare \
+	target/bin/nitro \
+			--persistent.global-config /tmp/sequencer_follower_mainnet \
+			--parent-chain.connection.url=http://38.154.254.162:8545 \
+			--parent-chain.blob-client.beacon-url=http://38.154.254.162:4000 \
+			--chain.name=arb1 \
+			--init.latest=genesis \
+			--validation.wasm.allowed-wasm-module-roots=0x184884e1eb9fefdc158f6c8ac912bb183bf3cf83f0090317e0bc4ac5860baa39 \
+			--execution.forwarding-target null \
+			--http.addr=0.0.0.0 \
+			--http.port=8747
+
+.PHONY: clean-run-follower-compare-mainnet
+clean-run-follower-compare-mainnet: clean-follower-mainnet run-follower-compare-mainnet
 
 .PHONY: clean-follower
 clean-follower:
 	@echo "Cleaning sequencer follower directory..."
 	@rm -rf /tmp/sequencer_follower
+
+.PHONY: clean-follower-mainnet
+clean-follower-mainnet:
+	@echo "Cleaning sequencer follower (Mainnet) directory..."
+	@rm -rf /tmp/sequencer_follower_mainnet
 
 .PHONY: run-sequencer
 run-sequencer: clean-sequencer
