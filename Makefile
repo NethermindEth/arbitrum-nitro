@@ -36,7 +36,7 @@ UNAME_S := $(shell uname -s)
 # In Mac OSX, there are a lot of warnings emitted if these environment variables aren't set.
 ifeq ($(UNAME_S), Darwin)
   export MACOSX_DEPLOYMENT_TARGET := $(shell sw_vers -productVersion)
-  export CGO_LDFLAGS := -Wl,-no_warn_duplicate_libraries
+  export CGO_LDFLAGS := -Wl,-no_warn_duplicate_libraries,-w
 endif
 
 precompile_names = AddressTable Aggregator BLS Debug FunctionTable GasInfo Info osTest Owner RetryableTx Statistics Sys

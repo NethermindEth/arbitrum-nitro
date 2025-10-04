@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"math/big"
 
+	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/offchainlabs/nitro/arbnode"
 	"github.com/offchainlabs/nitro/arbos/arbostypes"
 	"github.com/offchainlabs/nitro/arbutil"
@@ -246,4 +249,43 @@ func (w *nethermindExecutionClient) Initialize(ctx context.Context) error {
 	// TODO: Add a health check RPC call to verify Nethermind is accessible
 	// For now, we'll return success to allow the test to proceed
 	return nil
+}
+
+// Standard Ethereum RPC methods for test framework compatibility
+// These methods forward calls to the external Nethermind execution client
+
+func (p *nethermindExecutionClient) TransactionReceipt(ctx context.Context, txHash common.Hash) (*types.Receipt, error) {
+	var r *types.Receipt
+	err := p.rpcClient.client.CallContext(ctx, &r, "eth_getTransactionReceipt", txHash)
+	if err == nil && r == nil {
+		return nil, ethereum.NotFound
+	}
+	return r, err
+}
+
+func (p *nethermindExecutionClient) SubscribeNewHead(ctx context.Context, ch chan<- *types.Header) (*rpc.ClientSubscription, error) {
+	// For subscriptions, we need a WebSocket connection to the external execution client
+	wsURL := "ws://localhost:28551" // Use the WebSocket-enabled endpoint from Nethermind config
+	wsClient, err := rpc.Dial(wsURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to WebSocket endpoint %s: %w", wsURL, err)
+	}
+
+	return wsClient.EthSubscribe(ctx, ch, "newHeads")
+}
+
+func (p *nethermindExecutionClient) BlockNumber(ctx context.Context) (uint64, error) {
+	var blockNumber uint64
+	err := p.rpcClient.client.CallContext(ctx, &blockNumber, "eth_blockNumber")
+	return blockNumber, err
+}
+
+func (p *nethermindExecutionClient) BalanceAt(ctx context.Context, account common.Address, blockNumber *big.Int) (*big.Int, error) {
+	var balance *big.Int
+	blockParam := "latest"
+	if blockNumber != nil {
+		blockParam = fmt.Sprintf("0x%x", blockNumber)
+	}
+	err := p.rpcClient.client.CallContext(ctx, &balance, "eth_getBalance", account, blockParam)
+	return balance, err
 }
