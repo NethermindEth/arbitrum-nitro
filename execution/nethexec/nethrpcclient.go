@@ -17,11 +17,15 @@ import (
 	"github.com/offchainlabs/nitro/execution"
 )
 
-var defaultUrl = "http://localhost:20545"
+var (
+	defaultUrl   = "http://localhost:20545"
+	defaultWsUrl = "ws://localhost:28551"
+)
 
 type nethRpcClient struct {
 	client *rpc.Client
 	url    string
+	wsUrl  string
 }
 
 type messageParams struct {
@@ -87,20 +91,33 @@ func NewNethRpcClient() (*nethRpcClient, error) {
 		Timeout: 30 * time.Second,
 	})
 
+	wsUrl, exists := os.LookupEnv("PR_NETH_WS_CLIENT_URL")
+	if !exists {
+		log.Warn("Wasn't able to read PR_NETH_WS_CLIENT_URL, using default url", "url", defaultWsUrl)
+		wsUrl = defaultWsUrl
+	}
+
 	ctx := context.Background()
 	rpcClient, err := rpc.DialOptions(ctx, url, httpClient)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Neth RPC client: %w", err)
 	}
 
+	log.Info("Created Neth RPC client", "url", url, "wsUrl", wsUrl)
+
 	return &nethRpcClient{
 		client: rpcClient,
 		url:    url,
+		wsUrl:  wsUrl,
 	}, nil
 }
 
 func (c *nethRpcClient) Close() {
 	c.client.Close()
+}
+
+func (c *nethRpcClient) GetWebSocketURL() string {
+	return c.wsUrl
 }
 
 func (c *nethRpcClient) DigestMessage(ctx context.Context, index arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata, msgForPrefetch *arbostypes.MessageWithMetadata) *execution.MessageResult {

@@ -6,6 +6,7 @@ package arbtest
 import (
 	"context"
 	"math/big"
+	"os"
 	"testing"
 	"time"
 
@@ -64,7 +65,11 @@ func TestExecutionClientOnlyExternal(t *testing.T) {
 	defer replicaExecutionClientOnlyCleanup()
 
 	// Connect test client directly to Nethermind's RPC
-	nethermindRpcClient, err := rpc.Dial("http://localhost:20545")
+	nethRpcUrl := os.Getenv("PR_NETH_RPC_CLIENT_URL")
+	if nethRpcUrl == "" {
+		nethRpcUrl = "http://localhost:20545"
+	}
+	nethermindRpcClient, err := rpc.Dial(nethRpcUrl)
 	Require(t, err)
 	replicaTestClient := &TestClient{
 		ctx:    ctx,

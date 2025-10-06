@@ -1860,7 +1860,11 @@ func Create2ndNodeWithConfig(
 	// For external execution client, connect directly to Nethermind for RPC calls
 	var chainClient *ethclient.Client
 	if useExternalExecutionClient {
-		externalRpcClient, err := rpc.Dial("http://localhost:20545")
+		nethRpcUrl := os.Getenv("PR_NETH_RPC_CLIENT_URL")
+		if nethRpcUrl == "" {
+			nethRpcUrl = "http://localhost:20545"
+		}
+		externalRpcClient, err := rpc.Dial(nethRpcUrl)
 		Require(t, err)
 		chainClient = ethclient.NewClient(externalRpcClient)
 	} else {

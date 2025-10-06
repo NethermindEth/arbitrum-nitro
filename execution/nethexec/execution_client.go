@@ -265,7 +265,7 @@ func (p *nethermindExecutionClient) TransactionReceipt(ctx context.Context, txHa
 
 func (p *nethermindExecutionClient) SubscribeNewHead(ctx context.Context, ch chan<- *types.Header) (*rpc.ClientSubscription, error) {
 	// For subscriptions, we need a WebSocket connection to the external execution client
-	wsURL := "ws://localhost:28551" // Use the WebSocket-enabled endpoint from Nethermind config
+	wsURL := p.rpcClient.GetWebSocketURL()
 	wsClient, err := rpc.Dial(wsURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to WebSocket endpoint %s: %w", wsURL, err)
