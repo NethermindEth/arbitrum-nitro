@@ -265,6 +265,7 @@ func (c *nethRpcClient) SequenceDelayedMessage(ctx context.Context, message *arb
 }
 
 func (c *nethRpcClient) TransactionReceipt(ctx context.Context, txHash common.Hash) (any, error) {
+	log.Debug("Making JSON-RPC call to TransactionReceipt", "url", c.url, "txHash", txHash)
 	var result any
 	if err := c.client.CallContext(ctx, &result, "eth_getTransactionReceipt", txHash); err != nil {
 		return nil, err
@@ -273,6 +274,7 @@ func (c *nethRpcClient) TransactionReceipt(ctx context.Context, txHash common.Ha
 }
 
 func (c *nethRpcClient) SubscribeNewHead(ctx context.Context) (*rpc.ClientSubscription, error) {
+	log.Debug("Making JSON-RPC call to SubscribeNewHead", "url", c.url, "wsUrl", c.wsUrl)
 	wsClient, err := rpc.Dial(c.wsUrl)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to WebSocket endpoint %s: %w", c.wsUrl, err)
@@ -289,6 +291,7 @@ func (c *nethRpcClient) SubscribeNewHead(ctx context.Context) (*rpc.ClientSubscr
 }
 
 func (c *nethRpcClient) BlockNumber(ctx context.Context) (uint64, error) {
+	log.Debug("Making JSON-RPC call to BlockNumber", "url", c.url)
 	var result hexutil.Uint64
 	if err := c.client.CallContext(ctx, &result, "eth_blockNumber"); err != nil {
 		return 0, err
@@ -297,6 +300,7 @@ func (c *nethRpcClient) BlockNumber(ctx context.Context) (uint64, error) {
 }
 
 func (c *nethRpcClient) BalanceAt(ctx context.Context, account common.Address, blockNumber *big.Int) (*big.Int, error) {
+	log.Debug("Making JSON-RPC call to BalanceAt", "url", c.url, "account", account, "blockNumber", blockNumber)
 	var result hexutil.Big
 	blockParam := "latest"
 	if blockNumber != nil {

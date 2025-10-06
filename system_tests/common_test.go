@@ -106,7 +106,6 @@ type SecondNodeParams struct {
 	addresses                  *chaininfo.RollupAddresses
 	useExecutionClientOnly     bool
 	useExternalExecutionClient bool // Use external Nethermind execution client instead of internal geth
-	useCompareExecutionClient  bool // Use compareExecutionClient to compare Geth and Nethermind execution
 }
 
 type TestClient struct {
@@ -945,7 +944,7 @@ func build2ndNode(
 
 	testClient := NewTestClient(ctx)
 	testClient.Client, testClient.ConsensusNode =
-		Create2ndNodeWithConfig(t, ctx, firstNodeTestClient.ConsensusNode, parentChainTestClient.Stack, parentChainInfo, params.initData, params.nodeConfig, params.execConfig, params.stackConfig, valnodeConfig, params.addresses, initMessage, params.useExecutionClientOnly, params.useExternalExecutionClient, params.useCompareExecutionClient)
+		Create2ndNodeWithConfig(t, ctx, firstNodeTestClient.ConsensusNode, parentChainTestClient.Stack, parentChainInfo, params.initData, params.nodeConfig, params.execConfig, params.stackConfig, valnodeConfig, params.addresses, initMessage, params.useExecutionClientOnly, params.useExternalExecutionClient)
 	testClient.cleanup = func() { testClient.ConsensusNode.StopAndWait() }
 	return testClient, func() { testClient.cleanup() }
 }
@@ -1723,7 +1722,6 @@ func Create2ndNodeWithConfig(
 	initMessage *arbostypes.ParsedInitMessage,
 	useExecutionClientOnly bool,
 	useExternalExecutionClient bool,
-	useCompareExecutionClient bool,
 ) (*ethclient.Client, *arbnode.Node) {
 	if nodeConfig == nil {
 		nodeConfig = arbnode.ConfigDefaultL1NonSequencerTest()
@@ -1778,46 +1776,8 @@ func Create2ndNodeWithConfig(
 	locator, err := server_common.NewMachineLocator(valnodeConfig.Wasm.RootPath)
 	Require(t, err)
 
-	if useCompareExecutionClient {
-		// Create BOTH internal Geth and external Nethermind execution clients for comparison
-		gethExecClient, execErr := gethexec.CreateExecutionNode(ctx, chainStack, chainDb, blockchain, parentChainClient, configFetcher, 0)
-		Require(t, execErr)
-
-		nethermindExecClient, err := nethexec.NewNethermindExecutionClient()
-		Require(t, err)
-
-		// Initialize Nethermind with genesis
-		if initMessage != nil {
-			result := nethermindExecClient.DigestInitMessage(ctx, initMessage.InitialL1BaseFee, initMessage.SerializedChainConfig)
-			if result == nil {
-				t.Fatal("DigestInitMessage returned nil for external execution client")
-			}
-		}
-
-		// Create a channel for fatal comparison errors
-		fatalErrChan := make(chan error, 10)
-
-		// Wrap both clients in compareExecutionClient
-		compareExecClient := nethexec.NewCompareExecutionClient(gethExecClient, nethermindExecClient, fatalErrChan)
-
-		if useExecutionClientOnly {
-			currentNode, err = arbnode.CreateNodeExecutionClient(ctx, chainStack, compareExecClient, arbDb, NewFetcherFromConfig(nodeConfig), blockchain.Config(), parentChainClient, addresses, &validatorTxOpts, &sequencerTxOpts, dataSigner, feedErrChan, big.NewInt(1337), nil, locator.LatestWasmModuleRoot())
-			Require(t, err)
-		} else {
-			currentNode, err = arbnode.CreateNodeFullExecutionClient(ctx, chainStack, compareExecClient, compareExecClient, compareExecClient, compareExecClient, arbDb, NewFetcherFromConfig(nodeConfig), blockchain.Config(), parentChainClient, addresses, &validatorTxOpts, &sequencerTxOpts, dataSigner, feedErrChan, big.NewInt(1337), nil, locator.LatestWasmModuleRoot())
-			Require(t, err)
-		}
-
-		// Start monitoring for comparison errors
-		go func() {
-			select {
-			case err := <-fatalErrChan:
-				t.Errorf("COMPARISON ERROR: %v", err)
-			case <-ctx.Done():
-				return
-			}
-		}()
-	} else if useExternalExecutionClient {
+	var currentExec nethexec.FullExecutionClient
+	if useExternalExecutionClient {
 		// Create external Nethermind execution client
 		nethermindExecClient, err := nethexec.NewNethermindExecutionClient()
 		Require(t, err)
@@ -1829,29 +1789,18 @@ func Create2ndNodeWithConfig(
 				t.Fatal("DigestInitMessage returned nil for external execution client")
 			}
 		}
-
-		if useExecutionClientOnly {
-			currentNode, err = arbnode.CreateNodeExecutionClient(ctx, chainStack, nethermindExecClient, arbDb, NewFetcherFromConfig(nodeConfig), blockchain.Config(), parentChainClient, addresses, &validatorTxOpts, &sequencerTxOpts, dataSigner, feedErrChan, big.NewInt(1337), nil, locator.LatestWasmModuleRoot())
-			Require(t, err)
-		} else {
-			// For external execution client, we still need to create the internal geth execution node for full functionality
-			currentExec, execErr := gethexec.CreateExecutionNode(ctx, chainStack, chainDb, blockchain, parentChainClient, configFetcher, 0)
-			Require(t, execErr)
-			currentNode, err = arbnode.CreateNodeFullExecutionClient(ctx, chainStack, nethermindExecClient, currentExec, currentExec, currentExec, arbDb, NewFetcherFromConfig(nodeConfig), blockchain.Config(), parentChainClient, addresses, &validatorTxOpts, &sequencerTxOpts, dataSigner, feedErrChan, big.NewInt(1337), nil, locator.LatestWasmModuleRoot())
-			Require(t, err)
-		}
+		currentExec = nethermindExecClient
 	} else {
-		// Use internal geth execution client (original behavior)
-		currentExec, execErr := gethexec.CreateExecutionNode(ctx, chainStack, chainDb, blockchain, parentChainClient, configFetcher, 0)
-		Require(t, execErr)
+		currentExec, err = gethexec.CreateExecutionNode(ctx, chainStack, chainDb, blockchain, parentChainClient, configFetcher, 0)
+		Require(t, err)
+	}
 
-		if useExecutionClientOnly {
-			currentNode, err = arbnode.CreateNodeExecutionClient(ctx, chainStack, currentExec, arbDb, NewFetcherFromConfig(nodeConfig), blockchain.Config(), parentChainClient, addresses, &validatorTxOpts, &sequencerTxOpts, dataSigner, feedErrChan, big.NewInt(1337), nil, locator.LatestWasmModuleRoot())
-			Require(t, err)
-		} else {
-			currentNode, err = arbnode.CreateNodeFullExecutionClient(ctx, chainStack, currentExec, currentExec, currentExec, currentExec, arbDb, NewFetcherFromConfig(nodeConfig), blockchain.Config(), parentChainClient, addresses, &validatorTxOpts, &sequencerTxOpts, dataSigner, feedErrChan, big.NewInt(1337), nil, locator.LatestWasmModuleRoot())
-			Require(t, err)
-		}
+	if useExecutionClientOnly {
+		currentNode, err = arbnode.CreateNodeExecutionClient(ctx, chainStack, currentExec, arbDb, NewFetcherFromConfig(nodeConfig), blockchain.Config(), parentChainClient, addresses, &validatorTxOpts, &sequencerTxOpts, dataSigner, feedErrChan, big.NewInt(1337), nil, locator.LatestWasmModuleRoot())
+		Require(t, err)
+	} else {
+		currentNode, err = arbnode.CreateNodeFullExecutionClient(ctx, chainStack, currentExec, currentExec, currentExec, currentExec, arbDb, NewFetcherFromConfig(nodeConfig), blockchain.Config(), parentChainClient, addresses, &validatorTxOpts, &sequencerTxOpts, dataSigner, feedErrChan, big.NewInt(1337), nil, locator.LatestWasmModuleRoot())
+		Require(t, err)
 	}
 
 	err = currentNode.Start(ctx)
