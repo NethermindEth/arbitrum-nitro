@@ -15,7 +15,7 @@ import (
 	"github.com/offchainlabs/nitro/arbnode"
 )
 
-func TestExecutionClientOnlyInternal(t *testing.T) {
+func testExecutionClientOnly(t *testing.T, useExternalExecutionClient bool) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -24,56 +24,33 @@ func TestExecutionClientOnlyInternal(t *testing.T) {
 	defer cleanup()
 	seqTestClient := builder.L2
 
-	replicaExecutionClientOnlyConfig := arbnode.ConfigDefaultL1NonSequencerTest()
-	replicaExecutionClientOnlyTestClient, replicaExecutionClientOnlyCleanup := builder.Build2ndNode(t, &SecondNodeParams{nodeConfig: replicaExecutionClientOnlyConfig, useExecutionClientOnly: true})
-	defer replicaExecutionClientOnlyCleanup()
-
-	builder.L2Info.GenerateAccount("User2")
-	for i := 0; i < 3; i++ {
-		tx := builder.L2Info.PrepareTx("Owner", "User2", builder.L2Info.TransferGas, big.NewInt(1e12), nil)
-		err := seqTestClient.Client.SendTransaction(ctx, tx)
-		Require(t, err)
-		_, err = seqTestClient.EnsureTxSucceeded(tx)
-		Require(t, err)
-		_, err = WaitForTx(ctx, replicaExecutionClientOnlyTestClient.Client, tx.Hash(), time.Second*15)
-		Require(t, err)
-	}
-
-	replicaBalance, err := replicaExecutionClientOnlyTestClient.Client.BalanceAt(ctx, builder.L2Info.GetAddress("User2"), nil)
-	Require(t, err)
-	if replicaBalance.Cmp(big.NewInt(3e12)) != 0 {
-		t.Fatal("Unexpected balance:", replicaBalance)
-	}
-}
-
-func TestExecutionClientOnlyExternal(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	builder := NewNodeBuilder(ctx).DefaultConfig(t, true)
-	cleanup := builder.Build(t)
-	defer cleanup()
-	seqTestClient := builder.L2
-
-	replicaExecutionClientOnlyConfig := arbnode.ConfigDefaultL1NonSequencerTest()
-	_, replicaExecutionClientOnlyCleanup := builder.Build2ndNode(t, &SecondNodeParams{
-		nodeConfig:                 replicaExecutionClientOnlyConfig,
+	replicaConfig := arbnode.ConfigDefaultL1NonSequencerTest()
+	replicaParams := &SecondNodeParams{
+		nodeConfig:                 replicaConfig,
 		useExecutionClientOnly:     true,
-		useExternalExecutionClient: true,
-		useCompareExecutionClient:  false,
-	})
-	defer replicaExecutionClientOnlyCleanup()
-
-	// Connect test client directly to Nethermind's RPC
-	nethRpcUrl := os.Getenv("PR_NETH_RPC_CLIENT_URL")
-	if nethRpcUrl == "" {
-		nethRpcUrl = "http://localhost:20545"
+		useExternalExecutionClient: useExternalExecutionClient,
 	}
-	nethermindRpcClient, err := rpc.Dial(nethRpcUrl)
-	Require(t, err)
-	replicaTestClient := &TestClient{
-		ctx:    ctx,
-		Client: ethclient.NewClient(nethermindRpcClient),
+
+	var replicaClient *ethclient.Client
+	if useExternalExecutionClient {
+		// For external execution client, we don't get a TestClient because Nitro doesn't store receipts
+		// We need to connect directly to the external execution client's RPC
+		_, replicaCleanup := builder.Build2ndNode(t, replicaParams)
+		defer replicaCleanup()
+
+		// Connect directly to Nethermind
+		nethRpcUrl := os.Getenv("PR_NETH_RPC_CLIENT_URL")
+		if nethRpcUrl == "" {
+			nethRpcUrl = "http://localhost:20545"
+		}
+		rpcClient, err := rpc.Dial(nethRpcUrl)
+		Require(t, err)
+		replicaClient = ethclient.NewClient(rpcClient)
+	} else {
+		// For internal execution client, use the standard test client
+		replicaTestClient, replicaCleanup := builder.Build2ndNode(t, replicaParams)
+		defer replicaCleanup()
+		replicaClient = replicaTestClient.Client
 	}
 
 	builder.L2Info.GenerateAccount("User2")
@@ -83,25 +60,42 @@ func TestExecutionClientOnlyExternal(t *testing.T) {
 		Require(t, err)
 		_, err = seqTestClient.EnsureTxSucceeded(tx)
 		Require(t, err)
-		time.Sleep(time.Second * 2) // Allow time for L1 batch posting
+
+		if useExternalExecutionClient {
+			// Give time for L1 batch posting and sync
+			time.Sleep(time.Second * 2)
+		} else {
+			_, err = WaitForTx(ctx, replicaClient, tx.Hash(), time.Second*15)
+			Require(t, err)
+		}
 	}
 
-	// Wait for replica to sync by polling balance
+	// Wait for replica to sync (poll balance for external client)
 	expectedBalance := big.NewInt(3e12)
 	timeout := time.After(time.Second * 30)
 	ticker := time.NewTicker(time.Millisecond * 100)
 	defer ticker.Stop()
 
 	for {
+		replicaBalance, err := replicaClient.BalanceAt(ctx, builder.L2Info.GetAddress("User2"), nil)
+		Require(t, err)
+		if replicaBalance.Cmp(expectedBalance) == 0 {
+			return // Test passed!
+		}
+
 		select {
 		case <-timeout:
-			t.Fatal("Timeout waiting for replica to sync transactions")
+			t.Fatalf("Timeout waiting for replica to sync. Balance: %s, expected: %s", replicaBalance, expectedBalance)
 		case <-ticker.C:
-			replicaBalance, err := replicaTestClient.Client.BalanceAt(ctx, builder.L2Info.GetAddress("User2"), nil)
-			Require(t, err)
-			if replicaBalance.Cmp(expectedBalance) == 0 {
-				return // Test passed
-			}
+			// Continue polling
 		}
 	}
+}
+
+func TestExecutionClientOnlyInternal(t *testing.T) {
+	testExecutionClientOnly(t, false)
+}
+
+func TestExecutionClientOnlyExternal(t *testing.T) {
+	testExecutionClientOnly(t, true)
 }
