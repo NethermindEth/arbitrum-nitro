@@ -749,16 +749,9 @@ func (s *TransactionStreamer) AddMessagesAndEndBatch(firstMsgIdx arbutil.Message
 
 	if messagesAreConfirmed {
 		// Trim confirmed messages from l1pricedataCache
-		markFeedTo := firstMsgIdx + arbutil.MessageIndex(len(messages))
-		log.Info("[MARK_FEED] Calling MarkFeedStart",
-			"firstMsgIdx", firstMsgIdx,
-			"messagesCount", len(messages),
-			"markFeedTo", markFeedTo)
-		_, err := s.exec.MarkFeedStart(markFeedTo).Await(s.GetContext())
+		_, err := s.exec.MarkFeedStart(firstMsgIdx + arbutil.MessageIndex(len(messages))).Await(s.GetContext())
 		if err != nil {
 			log.Warn("TransactionStreamer: failed to mark feed start", "firstMsgIdx", firstMsgIdx, "err", err)
-		} else {
-			log.Info("[MARK_FEED] MarkFeedStart succeeded", "markFeedTo", markFeedTo)
 		}
 		s.reorgMutex.RLock()
 		numberOfDuplicates, _, _, err := s.countDuplicateMessages(firstMsgIdx, messagesWithBlockInfo, nil)
@@ -1366,20 +1359,11 @@ func (s *TransactionStreamer) ExecuteNextMsg(ctx context.Context) bool {
 		return false
 	}
 
-	log.Info("[EXEC_LOOP] HeadMessageIndex check",
-		"execHeadMsgIdx", execHeadMsgIdx,
-		"consensusHeadMsgIdx", consensusHeadMsgIdx,
-		"syncTillMessage", s.syncTillMessage)
-
 	if execHeadMsgIdx >= consensusHeadMsgIdx ||
 		(s.syncTillMessage > 0 && execHeadMsgIdx >= s.syncTillMessage) {
-		log.Info("[EXEC_LOOP] Nothing to execute - head caught up",
-			"execHeadMsgIdx", execHeadMsgIdx,
-			"consensusHeadMsgIdx", consensusHeadMsgIdx)
 		return false
 	}
 	msgIdxToExecute := execHeadMsgIdx + 1
-	log.Info("[EXEC_LOOP] Will execute message", "msgIdxToExecute", msgIdxToExecute)
 
 	msgAndBlockInfo, err := s.getMessageWithMetadataAndBlockInfo(msgIdxToExecute)
 	if err != nil {
@@ -1395,7 +1379,6 @@ func (s *TransactionStreamer) ExecuteNextMsg(ctx context.Context) bool {
 		}
 		msgForPrefetch = msg
 	}
-	log.Info("[EXEC_LOOP] Calling DigestMessage", "msgIdxToExecute", msgIdxToExecute)
 	msgResult, err := s.exec.DigestMessage(msgIdxToExecute, &msgAndBlockInfo.MessageWithMeta, msgForPrefetch).Await(ctx)
 	if err != nil {
 		logger := log.Warn
@@ -1405,10 +1388,6 @@ func (s *TransactionStreamer) ExecuteNextMsg(ctx context.Context) bool {
 		logger("ExecuteNextMsg failed to send message to execEngine", "err", err, "msgIdxToExecute", msgIdxToExecute)
 		return false
 	}
-	log.Info("[EXEC_LOOP] DigestMessage succeeded",
-		"msgIdxToExecute", msgIdxToExecute,
-		"blockHash", msgResult.BlockHash,
-		"sendRoot", msgResult.SendRoot)
 
 	s.checkResult(msgIdxToExecute, msgResult, msgAndBlockInfo)
 
@@ -1431,12 +1410,7 @@ func (s *TransactionStreamer) ExecuteNextMsg(ctx context.Context) bool {
 	}
 	s.broadcastMessages([]arbostypes.MessageWithMetadataAndBlockInfo{msgWithBlockInfo}, msgIdxToExecute)
 
-	hasMore := msgIdxToExecute+1 <= consensusHeadMsgIdx
-	log.Info("[EXEC_LOOP] ExecuteNextMsg completed",
-		"msgIdxToExecute", msgIdxToExecute,
-		"consensusHeadMsgIdx", consensusHeadMsgIdx,
-		"hasMore", hasMore)
-	return hasMore
+	return msgIdxToExecute+1 <= consensusHeadMsgIdx
 }
 
 func (s *TransactionStreamer) executeMessages(ctx context.Context, ignored struct{}) time.Duration {

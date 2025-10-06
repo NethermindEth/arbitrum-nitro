@@ -99,57 +99,13 @@ func (w *compareExecutionClient) DigestMessage(index arbutil.MessageIndex, msg *
 	internal := w.gethExecutionClient.DigestMessage(index, msg, msgForPrefetch)
 	external := w.nethermindExecutionClient.DigestMessage(index, msg, msgForPrefetch)
 
-	// Create a custom promise to intercept results and log block header details
-	promise := containers.NewPromise[*execution.MessageResult](nil)
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		defer cancel()
-
-		intRes, intErr := internal.Await(ctx)
-		extRes, extErr := external.Await(ctx)
-
-		// Log detailed block information before comparison
-		if intErr == nil && extErr == nil {
-			log.Info("=== BLOCK COMPARISON START ===", "index", index)
-			log.Info("GETH Block", "hash", intRes.BlockHash.Hex(), "sendRoot", intRes.SendRoot.Hex())
-			log.Info("NETHERMIND Block", "hash", extRes.BlockHash.Hex(), "sendRoot", extRes.SendRoot.Hex())
-
-			// Fetch block headers for detailed comparison
-			if bc := w.gethExecutionClient.ArbInterface.BlockChain(); bc != nil {
-				if gethBlock := bc.GetBlockByHash(intRes.BlockHash); gethBlock != nil {
-					log.Info("GETH HEADER Details",
-						"number", gethBlock.NumberU64(),
-						"stateRoot", gethBlock.Root().Hex(),
-						"txRoot", gethBlock.TxHash().Hex(),
-						"receiptRoot", gethBlock.ReceiptHash().Hex(),
-						"gasUsed", gethBlock.GasUsed(),
-						"gasLimit", gethBlock.GasLimit(),
-						"baseFee", gethBlock.BaseFee(),
-						"mixHash", gethBlock.MixDigest().Hex(),
-						"nonce", gethBlock.Nonce(),
-						"difficulty", gethBlock.Difficulty(),
-					)
-				}
-			}
-
-			log.Info("=== BLOCK COMPARISON END ===")
-		}
-
-		if err := compare("DigestMessage", intRes, intErr, extRes, extErr); err != nil {
-			select {
-			case w.fatalErrChan <- fmt.Errorf("compareExecutionClient %s: %s", "DigestMessage", err.Error()):
-				promise.ProduceError(err)
-			default:
-				log.Error("Non-fatal comparison error", "operation", "DigestMessage", "err", err)
-				promise.Produce(intRes)
-			}
-		} else {
-			promise.Produce(intRes)
-		}
-	}()
-
+	result := comparePromises(w.fatalErrChan,
+		"DigestMessage",
+		internal,
+		external,
+	)
 	log.Info("CompareExecutionClient: DigestMessage completed", "index", index, "elapsed", time.Since(start))
-	return &promise
+	return result
 }
 
 func (w *compareExecutionClient) Reorg(count arbutil.MessageIndex, newMessages []arbostypes.MessageWithMetadataAndBlockInfo, oldMessages []*arbostypes.MessageWithMetadata) containers.PromiseInterface[[]*execution.MessageResult] {

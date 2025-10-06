@@ -946,7 +946,6 @@ func build2ndNode(
 	testClient := NewTestClient(ctx)
 	testClient.Client, testClient.ConsensusNode =
 		Create2ndNodeWithConfig(t, ctx, firstNodeTestClient.ConsensusNode, parentChainTestClient.Stack, parentChainInfo, params.initData, params.nodeConfig, params.execConfig, params.stackConfig, valnodeConfig, params.addresses, initMessage, params.useExecutionClientOnly, params.useExternalExecutionClient, params.useCompareExecutionClient)
-	// testClient.ExecNode = getExecNode(t, testClient.ConsensusNode)
 	testClient.cleanup = func() { testClient.ConsensusNode.StopAndWait() }
 	return testClient, func() { testClient.cleanup() }
 }
@@ -1823,10 +1822,7 @@ func Create2ndNodeWithConfig(
 		nethermindExecClient, err := nethexec.NewNethermindExecutionClient()
 		Require(t, err)
 
-		// CRITICAL: Always call DigestInitMessage for external execution clients to create the genesis block.
-		// Even for execution-client-only replicas, the init message must be processed via DigestInitMessage
-		// to initialize the blockchain state. The init message from L1 (in TransactionStreamer) represents
-		// the *record* of initialization, but the actual genesis block creation happens via DigestInitMessage.
+		// Call DigestInitMessage to initialize the external execution client with genesis block
 		if initMessage != nil {
 			result := nethermindExecClient.DigestInitMessage(ctx, initMessage.InitialL1BaseFee, initMessage.SerializedChainConfig)
 			if result == nil {
@@ -1858,22 +1854,16 @@ func Create2ndNodeWithConfig(
 		}
 	}
 
-	// For external execution client, the nethermindExecutionClient provides both
-	// Arbitrum-specific methods (DigestMessage, etc.) and standard Ethereum RPC methods
-	// (TransactionReceipt, SubscribeNewHead, etc.) for unified test framework compatibility
-
 	err = currentNode.Start(ctx)
 	Require(t, err)
 
-	// Create test client - for external execution client, connect directly to Nethermind
+	// For external execution client, connect directly to Nethermind for RPC calls
 	var chainClient *ethclient.Client
 	if useExternalExecutionClient {
-		// Connect directly to the external Nethermind execution client for standard Ethereum RPC calls
 		externalRpcClient, err := rpc.Dial("http://localhost:20545")
 		Require(t, err)
 		chainClient = ethclient.NewClient(externalRpcClient)
 	} else {
-		// Use the standard approach for internal execution client
 		chainClient = ClientForStack(t, chainStack)
 	}
 

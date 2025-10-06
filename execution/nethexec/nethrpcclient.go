@@ -110,23 +110,13 @@ func (c *nethRpcClient) DigestMessage(ctx context.Context, index arbutil.Message
 		MessageForPrefetch: msgForPrefetch,
 	}
 
-	log.Info("[RPC] Making JSON-RPC call to DigestMessage",
-		"url", c.url,
-		"index", index,
-		"messageType", msg.Message.Header.Kind,
-	)
-
 	var result execution.MessageResult
 	// Use Call instead of CallContext to ensure proper JSON-RPC parameter formatting
 	err := c.client.Call(&result, "DigestMessage", params)
 	if err != nil {
-		log.Error("[RPC] Failed to call DigestMessage", "error", err)
+		log.Error("Failed to call DigestMessage", "error", err, "index", index)
 		return nil
 	}
-	log.Info("[RPC] DigestMessage succeeded",
-		"index", index,
-		"blockHash", result.BlockHash,
-		"sendRoot", result.SendRoot)
 
 	return &result
 }
@@ -184,13 +174,11 @@ func convertToRpcFinalityData(data *arbutil.FinalityData) *rpcFinalityData {
 }
 
 func (c *nethRpcClient) HeadMessageIndex(ctx context.Context) (arbutil.MessageIndex, error) {
-	log.Info("[RPC] Making JSON-RPC call to HeadMessageIndex", "url", c.url)
 	var result hexutil.Uint64
 	if err := c.client.CallContext(ctx, &result, "HeadMessageIndex"); err != nil {
-		log.Error("[RPC] Failed to call HeadMessageIndex", "error", err)
+		log.Error("Failed to call HeadMessageIndex", "error", err)
 		return 0, fmt.Errorf("failed to call HeadMessageIndex: %w", err)
 	}
-	log.Info("[RPC] HeadMessageIndex returned", "result", uint64(result))
 	return arbutil.MessageIndex(uint64(result)), nil
 }
 
@@ -225,13 +213,11 @@ func (c *nethRpcClient) BlockNumberToMessageIndex(ctx context.Context, blockNum 
 }
 
 func (c *nethRpcClient) MarkFeedStart(ctx context.Context, to arbutil.MessageIndex) error {
-	log.Info("[RPC] Making JSON-RPC call to MarkFeedStart", "url", c.url, "to", to)
 	var result string
 	if err := c.client.CallContext(ctx, &result, "MarkFeedStart", uint64(to)); err != nil {
-		log.Error("[RPC] Failed to call MarkFeedStart", "error", err)
+		log.Error("Failed to call MarkFeedStart", "error", err, "to", to)
 		return fmt.Errorf("failed to call MarkFeedStart: %w", err)
 	}
-	log.Info("[RPC] MarkFeedStart succeeded", "to", to)
 	return nil
 }
 
