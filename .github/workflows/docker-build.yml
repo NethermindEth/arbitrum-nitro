@@ -19,14 +19,17 @@ jobs:
         include:
           - platform: linux/arm64
             runner: ubuntu-arm64-8-core
+            arch_suffix: -arm64
           - platform: linux/amd64
             runner: ubuntu-latest
+            arch_suffix: -amd64
     uses: NethermindEth/github-workflows/.github/workflows/docker-build-push-jfrog.yaml@v1.9.0
     with:
       group_name: core
       runner: ${{ matrix.runner }}
       image_name: 'arbitrum-nitro'
       platforms: ${{ matrix.platform }}
+      additional_tags: nethermind${{ matrix.arch_suffix }}
       pre_build_script: |
         sudo rm -rf /usr/share/dotnet
         sudo rm -rf /opt/ghc
