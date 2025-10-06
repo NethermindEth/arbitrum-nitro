@@ -4,7 +4,6 @@
 package arbtest
 
 import (
-	"context"
 	"math/big"
 	"testing"
 	"time"
@@ -13,8 +12,7 @@ import (
 )
 
 func testExecutionClientOnly(t *testing.T, useExternalExecutionClient bool) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	builder := NewNodeBuilder(ctx).DefaultConfig(t, true)
 	cleanup := builder.Build(t)
@@ -33,7 +31,7 @@ func testExecutionClientOnly(t *testing.T, useExternalExecutionClient bool) {
 	replicaClient := replicaTestClient.Client
 
 	builder.L2Info.GenerateAccount("User2")
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		tx := builder.L2Info.PrepareTx("Owner", "User2", builder.L2Info.TransferGas, big.NewInt(1e12), nil)
 		err := seqTestClient.Client.SendTransaction(ctx, tx)
 		Require(t, err)

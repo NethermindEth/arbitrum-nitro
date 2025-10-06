@@ -71,7 +71,7 @@ func NewFakeRemoteExecutionRpcClient() *fakeRemoteExecutionRpcClient {
 	return &fakeRemoteExecutionRpcClient{}
 }
 
-func (n *fakeRemoteExecutionRpcClient) DigestInitMessage(ctx context.Context, initialL1BaseFee *big.Int, serializedChainConfig []byte) *execution.MessageResult {
+func (n *fakeRemoteExecutionRpcClient) DigestInitMessage(context.Context, *big.Int, []byte) *execution.MessageResult {
 	return &execution.MessageResult{}
 }
 
@@ -127,11 +127,15 @@ func (c *nethRpcClient) DigestMessage(ctx context.Context, index arbutil.Message
 		MessageForPrefetch: msgForPrefetch,
 	}
 
+	log.Debug("Making JSON-RPC call to DigestMessage",
+		"url", c.url,
+		"index", index,
+		"messageType", msg.Message.Header.Kind,
+	)
+
 	var result execution.MessageResult
-	// Use Call instead of CallContext to ensure proper JSON-RPC parameter formatting
-	err := c.client.Call(&result, "DigestMessage", params)
-	if err != nil {
-		log.Error("Failed to call DigestMessage", "error", err, "index", index)
+	if err := c.client.CallContext(ctx, &result, "DigestMessage", params); err != nil {
+		log.Error("Failed to call DigestMessage", "error", err)
 		return nil
 	}
 
@@ -146,7 +150,7 @@ func (c *nethRpcClient) DigestInitMessage(ctx context.Context, initialL1BaseFee 
 		SerializedChainConfig: serializedChainConfig,
 	}
 
-	log.Info("Making JSON-RPC call to DigestInitMessage",
+	log.Debug("Making JSON-RPC call to DigestInitMessage",
 		"url", c.url,
 		"initialL1BaseFee", initialL1BaseFee,
 		"len(serializedChainConfig)", len(serializedChainConfig))
@@ -165,13 +169,13 @@ func (c *nethRpcClient) SetFinalityData(ctx context.Context, safeFinalityData *a
 		ValidatedFinalityData: convertToRpcFinalityData(validatedFinalityData),
 	}
 
-	log.Info("Making JSON-RPC call to SetFinalityData",
+	log.Debug("Making JSON-RPC call to SetFinalityData",
 		"url", c.url,
 		"safeFinalityData", safeFinalityData,
 		"finalizedFinalityData", finalizedFinalityData,
 		"validatedFinalityData", validatedFinalityData)
 
-	var result interface{}
+	var result any
 	if err := c.client.CallContext(ctx, &result, "SetFinalityData", params); err != nil {
 		log.Error("Failed to call SetFinalityData", "error", err)
 		return fmt.Errorf("failed to call SetFinalityData: %w", err)
@@ -196,11 +200,11 @@ func (c *nethRpcClient) HeadMessageIndex(ctx context.Context) (arbutil.MessageIn
 		log.Error("Failed to call HeadMessageIndex", "error", err)
 		return 0, fmt.Errorf("failed to call HeadMessageIndex: %w", err)
 	}
-	return arbutil.MessageIndex(uint64(result)), nil
+	return arbutil.MessageIndex(result), nil
 }
 
 func (c *nethRpcClient) ResultAtMessageIndex(ctx context.Context, index arbutil.MessageIndex) (*execution.MessageResult, error) {
-	log.Info("Making JSON-RPC call to ResultAtMessageIndex", "url", c.url, "index", index)
+	log.Debug("Making JSON-RPC call to ResultAtMessageIndex", "url", c.url, "index", index)
 	var result execution.MessageResult
 	if err := c.client.CallContext(ctx, &result, "ResultAtMessageIndex", uint64(index)); err != nil {
 		log.Error("Failed to call ResultAtMessageIndex", "error", err)
@@ -210,7 +214,7 @@ func (c *nethRpcClient) ResultAtMessageIndex(ctx context.Context, index arbutil.
 }
 
 func (c *nethRpcClient) MessageIndexToBlockNumber(ctx context.Context, messageIndex arbutil.MessageIndex) (uint64, error) {
-	log.Info("Making JSON-RPC call to MessageIndexToBlockNumber", "url", c.url, "messageIndex", messageIndex)
+	log.Debug("Making JSON-RPC call to MessageIndexToBlockNumber", "url", c.url, "messageIndex", messageIndex)
 	var result hexutil.Uint64
 	if err := c.client.CallContext(ctx, &result, "MessageIndexToBlockNumber", uint64(messageIndex)); err != nil {
 		log.Error("Failed to call MessageIndexToBlockNumber", "error", err)
@@ -220,13 +224,13 @@ func (c *nethRpcClient) MessageIndexToBlockNumber(ctx context.Context, messageIn
 }
 
 func (c *nethRpcClient) BlockNumberToMessageIndex(ctx context.Context, blockNum uint64) (arbutil.MessageIndex, error) {
-	log.Info("Making JSON-RPC call to BlockNumberToMessageIndex", "url", c.url, "blockNum", blockNum)
+	log.Debug("Making JSON-RPC call to BlockNumberToMessageIndex", "url", c.url, "blockNum", blockNum)
 	var result hexutil.Uint64
 	if err := c.client.CallContext(ctx, &result, "BlockNumberToMessageIndex", blockNum); err != nil {
 		log.Error("Failed to call BlockNumberToMessageIndex", "error", err)
 		return 0, fmt.Errorf("failed to call BlockNumberToMessageIndex: %w", err)
 	}
-	return arbutil.MessageIndex(uint64(result)), nil
+	return arbutil.MessageIndex(result), nil
 }
 
 func (c *nethRpcClient) MarkFeedStart(ctx context.Context, to arbutil.MessageIndex) error {
@@ -239,7 +243,7 @@ func (c *nethRpcClient) MarkFeedStart(ctx context.Context, to arbutil.MessageInd
 }
 
 func (c *nethRpcClient) Reorg(ctx context.Context, count arbutil.MessageIndex, newMessages []arbostypes.MessageWithMetadataAndBlockInfo, oldMessages []*arbostypes.MessageWithMetadata) ([]*execution.MessageResult, error) {
-	log.Info("Making JSON-RPC call to Reorg", "url", c.url, "count", count, "newCount", len(newMessages), "oldCount", len(oldMessages))
+	log.Debug("Making JSON-RPC call to Reorg", "url", c.url, "count", count, "newCount", len(newMessages), "oldCount", len(oldMessages))
 	params := reorgParams{Index: count, Message: newMessages, MessageForPrefetch: oldMessages}
 	var result []*execution.MessageResult
 	if err := c.client.CallContext(ctx, &result, "Reorg", params); err != nil {
@@ -250,7 +254,7 @@ func (c *nethRpcClient) Reorg(ctx context.Context, count arbutil.MessageIndex, n
 }
 
 func (c *nethRpcClient) SequenceDelayedMessage(ctx context.Context, message *arbostypes.L1IncomingMessage, delayedSeqNum uint64) error {
-	log.Info("Making JSON-RPC call to SequenceDelayedMessage", "url", c.url, "delayedSeqNum", delayedSeqNum)
+	log.Debug("Making JSON-RPC call to SequenceDelayedMessage", "url", c.url, "delayedSeqNum", delayedSeqNum)
 	params := seqDelayedParams{DelayedSeqNum: delayedSeqNum, Message: message}
 	var result execution.MessageResult
 	if err := c.client.CallContext(ctx, &result, "SequenceDelayedMessage", params); err != nil {
@@ -260,8 +264,8 @@ func (c *nethRpcClient) SequenceDelayedMessage(ctx context.Context, message *arb
 	return nil
 }
 
-func (c *nethRpcClient) TransactionReceipt(ctx context.Context, txHash common.Hash) (interface{}, error) {
-	var result interface{}
+func (c *nethRpcClient) TransactionReceipt(ctx context.Context, txHash common.Hash) (any, error) {
+	var result any
 	if err := c.client.CallContext(ctx, &result, "eth_getTransactionReceipt", txHash); err != nil {
 		return nil, err
 	}
@@ -274,7 +278,7 @@ func (c *nethRpcClient) SubscribeNewHead(ctx context.Context) (*rpc.ClientSubscr
 		return nil, fmt.Errorf("failed to connect to WebSocket endpoint %s: %w", c.wsUrl, err)
 	}
 
-	ch := make(chan interface{})
+	ch := make(chan any)
 	sub, err := wsClient.Subscribe(ctx, "eth", ch, "newHeads")
 	if err != nil {
 		wsClient.Close()
