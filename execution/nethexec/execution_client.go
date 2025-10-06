@@ -252,40 +252,33 @@ func (w *nethermindExecutionClient) Initialize(ctx context.Context) error {
 }
 
 // Standard Ethereum RPC methods for test framework compatibility
-// These methods forward calls to the external Nethermind execution client
+// These methods delegate to nethRpcClient
 
 func (p *nethermindExecutionClient) TransactionReceipt(ctx context.Context, txHash common.Hash) (*types.Receipt, error) {
-	var r *types.Receipt
-	err := p.rpcClient.client.CallContext(ctx, &r, "eth_getTransactionReceipt", txHash)
-	if err == nil && r == nil {
+	result, err := p.rpcClient.TransactionReceipt(ctx, txHash)
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
 		return nil, ethereum.NotFound
 	}
-	return r, err
+
+	// Type assertion to convert interface{} to *types.Receipt
+	receipt, ok := result.(*types.Receipt)
+	if !ok {
+		return nil, fmt.Errorf("unexpected receipt type: %T", result)
+	}
+	return receipt, nil
 }
 
 func (p *nethermindExecutionClient) SubscribeNewHead(ctx context.Context, ch chan<- *types.Header) (*rpc.ClientSubscription, error) {
-	// For subscriptions, we need a WebSocket connection to the external execution client
-	wsURL := p.rpcClient.GetWebSocketURL()
-	wsClient, err := rpc.Dial(wsURL)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to WebSocket endpoint %s: %w", wsURL, err)
-	}
-
-	return wsClient.EthSubscribe(ctx, ch, "newHeads")
+	return p.rpcClient.SubscribeNewHead(ctx)
 }
 
 func (p *nethermindExecutionClient) BlockNumber(ctx context.Context) (uint64, error) {
-	var blockNumber uint64
-	err := p.rpcClient.client.CallContext(ctx, &blockNumber, "eth_blockNumber")
-	return blockNumber, err
+	return p.rpcClient.BlockNumber(ctx)
 }
 
 func (p *nethermindExecutionClient) BalanceAt(ctx context.Context, account common.Address, blockNumber *big.Int) (*big.Int, error) {
-	var balance *big.Int
-	blockParam := "latest"
-	if blockNumber != nil {
-		blockParam = fmt.Sprintf("0x%x", blockNumber)
-	}
-	err := p.rpcClient.client.CallContext(ctx, &balance, "eth_getBalance", account, blockParam)
-	return balance, err
+	return p.rpcClient.BalanceAt(ctx, account, blockNumber)
 }

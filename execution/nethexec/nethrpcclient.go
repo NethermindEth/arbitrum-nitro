@@ -259,3 +259,47 @@ func (c *nethRpcClient) SequenceDelayedMessage(ctx context.Context, message *arb
 	}
 	return nil
 }
+
+func (c *nethRpcClient) TransactionReceipt(ctx context.Context, txHash common.Hash) (interface{}, error) {
+	var result interface{}
+	if err := c.client.CallContext(ctx, &result, "eth_getTransactionReceipt", txHash); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (c *nethRpcClient) SubscribeNewHead(ctx context.Context) (*rpc.ClientSubscription, error) {
+	wsClient, err := rpc.Dial(c.wsUrl)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to WebSocket endpoint %s: %w", c.wsUrl, err)
+	}
+
+	ch := make(chan interface{})
+	sub, err := wsClient.Subscribe(ctx, "eth", ch, "newHeads")
+	if err != nil {
+		wsClient.Close()
+		return nil, err
+	}
+
+	return sub, nil
+}
+
+func (c *nethRpcClient) BlockNumber(ctx context.Context) (uint64, error) {
+	var result hexutil.Uint64
+	if err := c.client.CallContext(ctx, &result, "eth_blockNumber"); err != nil {
+		return 0, err
+	}
+	return uint64(result), nil
+}
+
+func (c *nethRpcClient) BalanceAt(ctx context.Context, account common.Address, blockNumber *big.Int) (*big.Int, error) {
+	var result hexutil.Big
+	blockParam := "latest"
+	if blockNumber != nil {
+		blockParam = hexutil.EncodeBig(blockNumber)
+	}
+	if err := c.client.CallContext(ctx, &result, "eth_getBalance", account, blockParam); err != nil {
+		return nil, err
+	}
+	return (*big.Int)(&result), nil
+}
