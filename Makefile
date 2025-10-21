@@ -343,10 +343,11 @@ run-follower-compare-sepolia:
 	PR_NETH_RPC_CLIENT_URL=http://localhost:20545 \
 	PR_NETH_WS_CLIENT_URL=ws://localhost:28551 \
 	PR_EXECUTION_MODE=compare \
+	NITRO_PARENT_CHAIN_FALLBACK_URLS=https://0xrpc.io/sep,https://rpc.sepolia.org,https://rpc2.sepolia.org,https://ethereum-sepolia-rpc.publicnode.com \
 	target/bin/nitro \
 		--persistent.global-config /tmp/sequencer_follower \
-		--parent-chain.connection.url=http://209.127.228.66/rpc/$$SEPOLIA_RPC_API_KEY \
-		--parent-chain.blob-client.beacon-url=http://209.127.228.66/consensus/$$SEPOLIA_RPC_API_KEY \
+		--parent-chain.connection.url=http://20.127.228.66/rpc/$$SEPOLIA_RPC_API_KEY \
+		--parent-chain.blob-client.beacon-url=http://20.127.228.66/consensus/$$SEPOLIA_RPC_API_KEY \
 		--chain.id=421614 \
 		--execution.forwarding-target null \
 		--execution.enable-prefetch-block=false \

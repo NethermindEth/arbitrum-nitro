@@ -64,7 +64,11 @@ func comparePromises[T any](fatalErrChan chan error, op string,
 				promise.Produce(intRes)
 			}
 		} else {
-			promise.Produce(intRes)
+			if intErr != nil {
+				promise.ProduceError(intErr)
+			} else {
+				promise.Produce(intRes)
+			}
 		}
 	}()
 	return &promise

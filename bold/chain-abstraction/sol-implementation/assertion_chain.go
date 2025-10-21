@@ -12,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"math/big"
+	"os"
 	"strings"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rpc"
 
@@ -30,6 +32,7 @@ import (
 	"github.com/offchainlabs/bold/containers/option"
 	"github.com/offchainlabs/bold/containers/threadsafe"
 	retry "github.com/offchainlabs/bold/runtime"
+	boldutil "github.com/offchainlabs/bold/util"
 	"github.com/offchainlabs/nitro/solgen/go/bridgegen"
 	"github.com/offchainlabs/nitro/solgen/go/mocksgen"
 	"github.com/offchainlabs/nitro/solgen/go/rollupgen"
@@ -996,16 +999,107 @@ func (a *AssertionChain) TopLevelAssertion(ctx context.Context, edgeId protocol.
 }
 
 func (a *AssertionChain) TopLevelClaimHeights(ctx context.Context, edgeId protocol.EdgeId) (protocol.OriginHeights, error) {
-	cm := a.SpecChallengeManager()
-	edgeOpt, err := cm.GetEdge(ctx, edgeId)
+	edgeOpt, err := a.SpecChallengeManager().GetEdge(ctx, edgeId)
 	if err != nil {
 		return protocol.OriginHeights{}, err
 	}
 	if edgeOpt.IsNone() {
 		return protocol.OriginHeights{}, errors.New("edge was nil")
 	}
-	edge := edgeOpt.Unwrap()
-	return edge.TopLevelClaimHeight(ctx)
+	return edgeOpt.Unwrap().TopLevelClaimHeight(ctx)
+}
+
+// parseFallbackURLsFromEnv reads and parses fallback URLs from NITRO_PARENT_CHAIN_FALLBACK_URLS env var
+func parseFallbackURLsFromEnv() []string {
+	fallbackEnv := os.Getenv("NITRO_PARENT_CHAIN_FALLBACK_URLS")
+	if fallbackEnv == "" {
+		return nil
+	}
+	var urls []string
+	for _, url := range strings.Split(fallbackEnv, ",") {
+		url = strings.TrimSpace(url)
+		if url != "" {
+			urls = append(urls, url)
+		}
+	}
+	return urls
+}
+
+// tryFallbackRPCs attempts to read assertion info using fallback RPC URLs
+func (a *AssertionChain) tryFallbackRPCs(
+	ctx context.Context,
+	id protocol.AssertionHash,
+	primaryErr error,
+) (*protocol.AssertionCreatedInfo, error) {
+	fallbackURLs := parseFallbackURLsFromEnv()
+	if len(fallbackURLs) == 0 {
+		return nil, primaryErr // No fallbacks configured
+	}
+
+	log.Warn("Primary RPC exhausted retries, trying fallback URLs",
+		"error", primaryErr,
+		"fallbackCount", len(fallbackURLs))
+
+	for i, fallbackURL := range fallbackURLs {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
+		log.Info("Trying fallback RPC", "url", fallbackURL, "index", i)
+
+		// Create temporary client for fallback URL
+		fallbackClient, clientErr := ethclient.Dial(fallbackURL)
+		if clientErr != nil {
+			log.Warn("Failed to dial fallback RPC", "url", fallbackURL, "error", clientErr)
+			continue
+		}
+		defer fallbackClient.Close()
+
+		// Create temporary assertion chain with fallback backend
+		// Wrap client with BackendWrapper to implement ChainBackend interface
+		fallbackBackend := boldutil.NewBackendWrapper(fallbackClient, a.rpcHeadBlockNumber)
+		fallbackChain := &AssertionChain{
+			backend:            fallbackBackend,
+			rollup:             a.rollup,
+			userLogic:          a.userLogic,
+			rollupAddr:         a.rollupAddr,
+			rpcHeadBlockNumber: a.rpcHeadBlockNumber,
+		}
+
+		// Retry with fallback (same retry mechanism as primary)
+		info, err := retry.UntilSucceeds(ctx, func() (*protocol.AssertionCreatedInfo, error) {
+			return fallbackChain.ReadAssertionCreationInfo(ctx, id)
+		})
+
+		if err == nil {
+			log.Info("Successfully used fallback RPC", "url", fallbackURL, "index", i)
+			return info, nil
+		}
+
+		log.Warn("Fallback RPC also failed", "url", fallbackURL, "error", err)
+	}
+
+	// All fallbacks failed, return original primary error
+	return nil, fmt.Errorf("all RPC endpoints failed (primary + %d fallbacks): %w", len(fallbackURLs), primaryErr)
+}
+
+// ReadAssertionCreationInfoWithFallback tries primary RPC with full retry mechanism,
+// then tries fallback URLs if primary fails after exhausting all retries.
+func (a *AssertionChain) ReadAssertionCreationInfoWithFallback(
+	ctx context.Context,
+	id protocol.AssertionHash,
+) (*protocol.AssertionCreatedInfo, error) {
+	// Try primary RPC first with full retry mechanism
+	info, err := retry.UntilSucceeds(ctx, func() (*protocol.AssertionCreatedInfo, error) {
+		return a.ReadAssertionCreationInfo(ctx, id)
+	})
+
+	if err == nil {
+		return info, nil
+	}
+
+	// Primary failed after retries, try fallback URLs
+	return a.tryFallbackRPCs(ctx, id, err)
 }
 
 // ReadAssertionCreationInfo for an assertion sequence number by looking up its creation

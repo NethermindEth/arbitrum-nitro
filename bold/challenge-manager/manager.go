@@ -225,15 +225,11 @@ func (m *Manager) getTrackerForEdge(ctx context.Context, edge protocol.VerifiedR
 	cachedHeightAndInboxMsgCount, ok := m.assertionMetadataCache.TryGet(claimedHash)
 	var edgeTrackerAssertionInfo l2stateprovider.AssociatedAssertionMetadata
 	if !ok {
-		assertionCreationInfo, creationErr := retry.UntilSucceeds(ctx, func() (*protocol.AssertionCreatedInfo, error) {
-			return m.chain.ReadAssertionCreationInfo(ctx, claimedHash)
-		})
+		assertionCreationInfo, creationErr := m.chain.ReadAssertionCreationInfoWithFallback(ctx, claimedHash)
 		if creationErr != nil {
 			return nil, creationErr
 		}
-		prevCreationInfo, prevCreationErr := retry.UntilSucceeds(ctx, func() (*protocol.AssertionCreatedInfo, error) {
-			return m.chain.ReadAssertionCreationInfo(ctx, assertionCreationInfo.ParentAssertionHash)
-		})
+		prevCreationInfo, prevCreationErr := m.chain.ReadAssertionCreationInfoWithFallback(ctx, assertionCreationInfo.ParentAssertionHash)
 		if prevCreationErr != nil {
 			return nil, prevCreationErr
 		}

@@ -863,18 +863,12 @@ func (w *Watcher) confirmAssertionByChallengeWinner(ctx context.Context, edge pr
 		log.Error("Could not get challenge grace period blocks", "err", err)
 		return
 	}
-	assertionCreationInfo, err := retry.UntilSucceeds(ctx, func() (*protocol.AssertionCreatedInfo, error) {
-		return w.chain.ReadAssertionCreationInfo(ctx, claimedAssertion)
-	})
+	assertionCreationInfo, err := w.chain.ReadAssertionCreationInfoWithFallback(ctx, claimedAssertion)
 	if err != nil {
 		log.Error("Could not get assertion creation info", "err", err)
 		return
 	}
-	parentCreationInfo, err := retry.UntilSucceeds(ctx, func() (*protocol.AssertionCreatedInfo, error) {
-		return w.chain.ReadAssertionCreationInfo(
-			ctx, assertionCreationInfo.ParentAssertionHash,
-		)
-	})
+	parentCreationInfo, err := w.chain.ReadAssertionCreationInfoWithFallback(ctx, assertionCreationInfo.ParentAssertionHash)
 	if err != nil {
 		log.Error("Could not get parent assertion creation info", "err", err)
 		return
