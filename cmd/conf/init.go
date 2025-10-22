@@ -45,12 +45,10 @@ type InitConfig struct {
 	ReorgToMessageBatch           int64         `koanf:"reorg-to-message-batch"`
 	ReorgToBlockBatch             int64         `koanf:"reorg-to-block-batch"`
 	ValidateGenesisAssertion      bool          `koanf:"validate-genesis-assertion"`
-
-	// NEW: Bootstrap from execution client fields
-	BootstrapFromExecution bool   `koanf:"bootstrap-from-execution"`
-	ExecutionClientUrl     string `koanf:"execution-client-url"`
-	StartBlock             uint64 `koanf:"start-block"`
-	ValidateBootstrap      bool   `koanf:"validate-bootstrap"`
+	BootstrapFromExecution        bool          `koanf:"bootstrap-from-execution"`
+	ExecutionClientUrl            string        `koanf:"execution-client-url"`
+	StartBlock                    uint64        `koanf:"start-block"`
+	ValidateBootstrap             bool          `koanf:"validate-bootstrap"`
 }
 
 var InitConfigDefault = InitConfig{
@@ -84,7 +82,6 @@ var InitConfigDefault = InitConfig{
 	ReorgToBlockBatch:             -1,
 	ValidateGenesisAssertion:      true,
 
-	// NEW: Bootstrap defaults
 	BootstrapFromExecution: false,
 	ExecutionClientUrl:     "",
 	StartBlock:             0,
@@ -126,7 +123,6 @@ func InitConfigAddOptions(prefix string, f *pflag.FlagSet) {
 	)
 	f.Bool(prefix+".validate-genesis-assertion", InitConfigDefault.ValidateGenesisAssertion, "tests genesis assertion posted on parent chain against the genesis block created on init")
 
-	// NEW: Bootstrap options
 	f.Bool(prefix+".bootstrap-from-execution", InitConfigDefault.BootstrapFromExecution, "bootstrap chain database from execution client instead of downloading snapshot")
 	f.String(prefix+".execution-client-url", InitConfigDefault.ExecutionClientUrl, "execution client RPC URL for bootstrapping (required when bootstrap-from-execution is true)")
 	f.Uint64(prefix+".start-block", InitConfigDefault.StartBlock, "block number to start from when bootstrapping from execution client (required when bootstrap-from-execution is true)")
@@ -163,7 +159,6 @@ func (c *InitConfig) Validate() error {
 		return fmt.Errorf("invalid value of rebuild-local-wasm, want: auto or force or false, got: %s", c.RebuildLocalWasm)
 	}
 
-	// NEW: Validate bootstrap configuration
 	if c.BootstrapFromExecution {
 		if c.ExecutionClientUrl == "" {
 			return fmt.Errorf("execution-client-url is required when bootstrap-from-execution is enabled")
