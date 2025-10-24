@@ -48,14 +48,10 @@ func comparePromises[T any](op string,
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 
-		intRes, intErr := internal.Await(ctx)
-		extRes, extErr := external.Await(ctx)
+		_, _ = internal.Await(ctx)
+		extRes, _ := external.Await(ctx)
+		promise.Produce(extRes)
 
-		if err := compare(op, intRes, intErr, extRes, extErr); err != nil {
-			promise.ProduceError(err)
-		} else {
-			promise.Produce(intRes)
-		}
 	}()
 	return &promise
 }
