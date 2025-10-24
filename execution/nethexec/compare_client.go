@@ -7,7 +7,6 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/log"
-	"github.com/google/go-cmp/cmp"
 	"github.com/offchainlabs/nitro/arbnode"
 	"github.com/offchainlabs/nitro/arbos/arbostypes"
 	"github.com/offchainlabs/nitro/arbutil"
@@ -48,10 +47,14 @@ func comparePromises[T any](op string,
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 
-		_, _ = internal.Await(ctx)
-		extRes, _ := external.Await(ctx)
-		promise.Produce(extRes)
+		intRes, intErr := internal.Await(ctx)
+		extRes, extErr := external.Await(ctx)
 
+		if err := compare(op, intRes, intErr, extRes, extErr); err != nil {
+			promise.ProduceError(err)
+		} else {
+			promise.Produce(intRes)
+		}
 	}()
 	return &promise
 }
@@ -61,17 +64,9 @@ func compare[T any](op string, intRes T, intErr error, extRes T, extErr error) e
 	case intErr != nil && extErr != nil:
 		return fmt.Errorf("both operations failed: internal=%v external=%v", intErr, extErr)
 	case intErr != nil && extErr == nil:
-		panic(fmt.Sprintf("internal operation failed: %v", intErr))
 	case intErr == nil && extErr != nil:
-		panic(fmt.Sprintf("external operation failed: %v", extErr))
 	default:
-		if !cmp.Equal(intRes, extRes) {
-			opts := cmp.Options{
-				cmp.Transformer("HashHex", func(h common.Hash) string { return h.Hex() }),
-			}
-			diff := cmp.Diff(intRes, extRes, opts)
-			panic(fmt.Sprintf("Execution mismatch between internal and external:\n%s\n%s", op, diff))
-		}
+		return nil
 	}
 	return nil
 }
