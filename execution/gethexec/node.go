@@ -475,6 +475,16 @@ func (n *ExecutionNode) DigestMessage(index arbutil.MessageIndex, msg *arbostype
 	}()
 	return &promise
 }
+
+func (n *ExecutionNode) DigestMessages(index arbutil.MessageIndex, msg []*arbostypes.MessageWithMetadata, msgForPrefetch *arbostypes.MessageWithMetadata) containers.PromiseInterface[*execution.BulkMessageResult] {
+	promise := containers.NewPromise[*execution.BulkMessageResult](nil)
+	go func() {
+		var res *execution.BulkMessageResult = nil
+		promise.Produce(res)
+	}()
+	return &promise
+}
+
 func (n *ExecutionNode) Reorg(newHeadMsgIdx arbutil.MessageIndex, newMessages []arbostypes.MessageWithMetadataAndBlockInfo, oldMessages []*arbostypes.MessageWithMetadata) containers.PromiseInterface[[]*execution.MessageResult] {
 	return containers.NewReadyPromise(n.ExecEngine.Reorg(newHeadMsgIdx, newMessages, oldMessages))
 }

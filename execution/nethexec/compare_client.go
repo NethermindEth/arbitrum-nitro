@@ -108,6 +108,13 @@ func (w *compareExecutionClient) DigestMessage(index arbutil.MessageIndex, msg *
 	return result
 }
 
+func (w *compareExecutionClient) DigestMessages(index arbutil.MessageIndex, msg []*arbostypes.MessageWithMetadata, msgForPrefetch *arbostypes.MessageWithMetadata) containers.PromiseInterface[*execution.BulkMessageResult] {
+	promise := containers.NewPromise[*execution.BulkMessageResult](nil)
+	var res *execution.BulkMessageResult = nil
+	promise.Produce(res)
+	return &promise
+}
+
 func (w *compareExecutionClient) Reorg(count arbutil.MessageIndex, newMessages []arbostypes.MessageWithMetadataAndBlockInfo, oldMessages []*arbostypes.MessageWithMetadata) containers.PromiseInterface[[]*execution.MessageResult] {
 	start := time.Now()
 	log.Info("CompareExecutionClient: Reorg", "count", count, "newMessagesCount", len(newMessages), "oldMessagesCount", len(oldMessages))
