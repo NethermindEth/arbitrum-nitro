@@ -7,6 +7,7 @@ import (
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/offchainlabs/nitro/arbnode"
@@ -49,10 +50,10 @@ func (p *nethermindExecutionClient) DigestMessage(index arbutil.MessageIndex, ms
 	return &promise
 }
 
-func (p *nethermindExecutionClient) SetFinalityData(ctx context.Context, safeFinalityData *arbutil.FinalityData, finalizedFinalityData *arbutil.FinalityData, validatedFinalityData *arbutil.FinalityData) containers.PromiseInterface[struct{}] {
+func (p *nethermindExecutionClient) SetFinalityData(safeFinalityData *arbutil.FinalityData, finalizedFinalityData *arbutil.FinalityData, validatedFinalityData *arbutil.FinalityData) containers.PromiseInterface[struct{}] {
 	promise := containers.NewPromise[struct{}](nil)
 	go func() {
-		err := p.rpcClient.SetFinalityData(ctx, safeFinalityData, finalizedFinalityData, validatedFinalityData)
+		err := p.rpcClient.SetFinalityData(context.Background(), safeFinalityData, finalizedFinalityData, validatedFinalityData)
 		if err != nil {
 			promise.ProduceError(err)
 			return
@@ -60,6 +61,10 @@ func (p *nethermindExecutionClient) SetFinalityData(ctx context.Context, safeFin
 		promise.Produce(struct{}{})
 	}()
 	return &promise
+}
+
+func (p *nethermindExecutionClient) SetConsensusSyncData(syncData *execution.ConsensusSyncData) containers.PromiseInterface[struct{}] {
+	return containers.NewReadyPromise(struct{}{}, fmt.Errorf("SetConsensusSyncData not implemented"))
 }
 func (p *nethermindExecutionClient) Reorg(msgIdxOfFirstMsgToAdd arbutil.MessageIndex, newMessages []arbostypes.MessageWithMetadataAndBlockInfo, oldMessages []*arbostypes.MessageWithMetadata) containers.PromiseInterface[[]*execution.MessageResult] {
 	promise := containers.NewPromise[[]*execution.MessageResult](nil)
@@ -211,7 +216,7 @@ func (p *nethermindExecutionClient) FullSyncProgressMap(ctx context.Context) map
 	return map[string]interface{}{}
 }
 
-func (p *nethermindExecutionClient) RecordBlockCreation(ctx context.Context, index arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata) (*execution.RecordResult, error) {
+func (p *nethermindExecutionClient) RecordBlockCreation(ctx context.Context, index arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata, wasmTargets []rawdb.WasmTarget) (*execution.RecordResult, error) {
 	return nil, fmt.Errorf("RecordBlockCreation not implemented")
 }
 
@@ -226,7 +231,7 @@ func (p *nethermindExecutionClient) PrepareForRecord(ctx context.Context, start,
 func (p *nethermindExecutionClient) ArbOSVersionForMessageIndex(msgIdx arbutil.MessageIndex) containers.PromiseInterface[uint64] {
 	promise := containers.NewPromise[uint64](nil)
 	promise.ProduceError(fmt.Errorf("ArbOSVersionForMessageIndex not implemented"))
-	return promise
+	return &promise
 }
 
 func (w *nethermindExecutionClient) SetConsensusClient(consensus execution.FullConsensusClient) {

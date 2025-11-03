@@ -151,23 +151,23 @@ func TestAppend(t *testing.T) {
 		},
 		// There was a bug where if the last message was a duplicate it could insert an empty segment.
 		{
-			"MessageSeenFirstSegmentMessageDoesntCreateNewSegment",
-			[]arbutil.MessageIndex{40, 41},
-			[]arbutil.MessageIndex{42, 43, 44, 45, 41},
-			6,
-			40,
-			45,
-			[]arbutil.MessageIndex{40, 41, 42, 43, 44, 45},
+			name:               "MessageSeenFirstSegmentMessageDoesntCreateNewSegment",
+			backlogIndexes:     []arbutil.MessageIndex{40, 41},
+			newIndexes:         []arbutil.MessageIndex{42, 43, 44, 45, 41},
+			expectedCount:      6,
+			expectedStart:      40,
+			expectedEnd:        45,
+			expectedLookupKeys: []arbutil.MessageIndex{40, 41, 42, 43, 44, 45},
 		},
 		// The above bug could also be used to insert messages out of order.
 		{
-			"MyMessageSeenFirstSegmentMessageDoesntAllowOutOfOrderInsertion",
-			[]arbutil.MessageIndex{40, 41},
-			[]arbutil.MessageIndex{42, 43, 44, 45, 41, 1},
-			6,
-			40,
-			45,
-			[]arbutil.MessageIndex{40, 41, 42, 43, 44, 45},
+			name:               "MyMessageSeenFirstSegmentMessageDoesntAllowOutOfOrderInsertion",
+			backlogIndexes:     []arbutil.MessageIndex{40, 41},
+			newIndexes:         []arbutil.MessageIndex{42, 43, 44, 45, 41, 1},
+			expectedCount:      6,
+			expectedStart:      40,
+			expectedEnd:        45,
+			expectedLookupKeys: []arbutil.MessageIndex{40, 41, 42, 43, 44, 45},
 		},
 	}
 

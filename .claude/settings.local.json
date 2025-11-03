@@ -24,7 +24,10 @@
       "Bash(go build:*)",
       "Bash(test:*)",
       "Bash(git rm:*)",
-      "Bash(make:*)"
+      "Bash(make:*)",
+      "Bash(go run:*)",
+      "Bash(gh pr view:*)",
+      "Bash(git merge-base:*)"
     ],
     "deny": [],
     "ask": []

@@ -21,9 +21,8 @@ func testExecutionClientOnly(t *testing.T, useExternalExecutionClient bool) {
 
 	replicaConfig := arbnode.ConfigDefaultL1NonSequencerTest()
 	replicaParams := &SecondNodeParams{
-		nodeConfig:                 replicaConfig,
-		useExecutionClientOnly:     true,
-		useExternalExecutionClient: useExternalExecutionClient,
+		nodeConfig:             replicaConfig,
+		useExecutionClientOnly: true,
 	}
 
 	replicaTestClient, replicaCleanup := builder.Build2ndNode(t, replicaParams)

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/google/go-cmp/cmp"
 	"github.com/offchainlabs/nitro/arbnode"
@@ -160,15 +161,23 @@ func (w *compareExecutionClient) BlockNumberToMessageIndex(blockNum uint64) cont
 	return result
 }
 
-func (w *compareExecutionClient) SetFinalityData(ctx context.Context, finalityData *arbutil.FinalityData, finalizedFinalityData *arbutil.FinalityData, validatedFinalityData *arbutil.FinalityData) containers.PromiseInterface[struct{}] {
+func (w *compareExecutionClient) SetFinalityData(finalityData *arbutil.FinalityData, finalizedFinalityData *arbutil.FinalityData, validatedFinalityData *arbutil.FinalityData) containers.PromiseInterface[struct{}] {
 	log.Info("CompareExecutionClient: SetFinalityData",
 		"safeFinalityData", finalityData,
 		"finalizedFinalityData", finalizedFinalityData,
 		"validatedFinalityData", validatedFinalityData)
 
-	internal := w.gethExecutionClient.SetFinalityData(ctx, finalityData, finalizedFinalityData, validatedFinalityData)
-	external := w.nethermindExecutionClient.SetFinalityData(ctx, finalityData, finalizedFinalityData, validatedFinalityData)
+	internal := w.gethExecutionClient.SetFinalityData(finalityData, finalizedFinalityData, validatedFinalityData)
+	external := w.nethermindExecutionClient.SetFinalityData(finalityData, finalizedFinalityData, validatedFinalityData)
 	return comparePromises(w.fatalErrChan, "SetFinalityData", internal, external)
+}
+
+func (w *compareExecutionClient) SetConsensusSyncData(syncData *execution.ConsensusSyncData) containers.PromiseInterface[struct{}] {
+	start := time.Now()
+	log.Info("CompareExecutionClient: SetConsensusSyncData")
+	result := w.gethExecutionClient.SetConsensusSyncData(syncData)
+	log.Info("CompareExecutionClient: SetConsensusSyncData completed", "elapsed", time.Since(start))
+	return result
 }
 
 func (w *compareExecutionClient) MarkFeedStart(to arbutil.MessageIndex) containers.PromiseInterface[struct{}] {
@@ -296,10 +305,10 @@ func (w *compareExecutionClient) FullSyncProgressMap(ctx context.Context) map[st
 
 // ---- execution.ExecutionRecorder interface methods ----
 
-func (w *compareExecutionClient) RecordBlockCreation(ctx context.Context, index arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata) (*execution.RecordResult, error) {
+func (w *compareExecutionClient) RecordBlockCreation(ctx context.Context, index arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata, wasmTargets []rawdb.WasmTarget) (*execution.RecordResult, error) {
 	start := time.Now()
 	log.Info("CompareExecutionClient: RecordBlockCreation", "index", index)
-	result, err := w.gethExecutionClient.RecordBlockCreation(ctx, index, msg)
+	result, err := w.gethExecutionClient.RecordBlockCreation(ctx, index, msg, wasmTargets)
 	log.Info("CompareExecutionClient: RecordBlockCreation completed", "index", index, "err", err, "elapsed", time.Since(start))
 	return result, err
 }
