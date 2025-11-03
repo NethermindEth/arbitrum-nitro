@@ -19,7 +19,7 @@ import (
 type FullExecutionClient interface {
 	execution.ExecutionSequencer // includes ExecutionClient
 	execution.ExecutionRecorder
-	execution.ExecutionBatchPoster
+	execution.ArbOSVersionGetter
 }
 
 var (
@@ -321,12 +321,16 @@ func (w *compareExecutionClient) PrepareForRecord(ctx context.Context, start, en
 
 // ---- execution.ExecutionBatchindexter interface methods ----
 
-func (w *compareExecutionClient) ArbOSVersionForMessageIndex(msgIdx arbutil.MessageIndex) (uint64, error) {
+func (w *compareExecutionClient) ArbOSVersionForMessageIndex(msgIdx arbutil.MessageIndex) containers.PromiseInterface[uint64] {
 	start := time.Now()
 	log.Info("CompareExecutionClient: ArbOSVersionForMessageIndex", "msgIdx", msgIdx)
-	result, err := w.gethExecutionClient.ArbOSVersionForMessageIndex(msgIdx)
-	log.Info("CompareExecutionClient: ArbOSVersionForMessageIndex completed", "msgIdx", msgIdx, "result", result, "err", err, "elapsed", time.Since(start))
-	return result, err
+	promise := w.gethExecutionClient.ArbOSVersionForMessageIndex(msgIdx)
+	// Wait for promise to resolve for logging
+	go func() {
+		result, err := promise.Await(context.Background())
+		log.Info("CompareExecutionClient: ArbOSVersionForMessageIndex completed", "msgIdx", msgIdx, "result", result, "err", err, "elapsed", time.Since(start))
+	}()
+	return promise
 }
 
 func (w *compareExecutionClient) SetConsensusClient(consensus execution.FullConsensusClient) {

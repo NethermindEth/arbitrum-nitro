@@ -223,8 +223,10 @@ func (p *nethermindExecutionClient) PrepareForRecord(ctx context.Context, start,
 	return fmt.Errorf("PrepareForRecord not implemented")
 }
 
-func (p *nethermindExecutionClient) ArbOSVersionForMessageIndex(msgIdx arbutil.MessageIndex) (uint64, error) {
-	return 0, fmt.Errorf("ArbOSVersionForMessageIndex not implemented")
+func (p *nethermindExecutionClient) ArbOSVersionForMessageIndex(msgIdx arbutil.MessageIndex) containers.PromiseInterface[uint64] {
+	promise := containers.NewPromise[uint64](nil)
+	promise.ProduceError(fmt.Errorf("ArbOSVersionForMessageIndex not implemented"))
+	return promise
 }
 
 func (w *nethermindExecutionClient) SetConsensusClient(consensus execution.FullConsensusClient) {
