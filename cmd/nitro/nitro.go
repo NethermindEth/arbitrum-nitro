@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/cockroachdb/pebble"
-	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/knadh/koanf"
 	"github.com/knadh/koanf/providers/confmap"
 	"github.com/spf13/pflag"
@@ -43,6 +42,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/graphql"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/node"
 	"github.com/ethereum/go-ethereum/params"
 

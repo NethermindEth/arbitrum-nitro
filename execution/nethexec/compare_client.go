@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
-	"github.com/google/go-cmp/cmp"
+
 	"github.com/offchainlabs/nitro/arbnode"
 	"github.com/offchainlabs/nitro/arbos/arbostypes"
 	"github.com/offchainlabs/nitro/arbutil"
@@ -108,11 +110,11 @@ func comparePromises[T any](fatalErrChan chan error, op string,
 func compare[T any](op string, intRes T, intErr error, extRes T, extErr error) error {
 	switch {
 	case intErr != nil && extErr != nil:
-		return fmt.Errorf("both operations failed: internal=%v external=%v", intErr, extErr)
+		return fmt.Errorf("both operations failed: internal=%w external=%w", intErr, extErr)
 	case intErr != nil && extErr == nil:
-		return fmt.Errorf("internal operation failed: %v", intErr)
+		return fmt.Errorf("internal operation failed: %w", intErr)
 	case intErr == nil && extErr != nil:
-		return fmt.Errorf("external operation failed: %v", extErr)
+		return fmt.Errorf("external operation failed: %w", extErr)
 	default:
 		if !cmp.Equal(intRes, extRes) {
 			opts := cmp.Options{

@@ -24,7 +24,7 @@ func TestSetAndGetGasPricingConstraints(t *testing.T) {
 	defer cleanup()
 
 	auth := builder.L2Info.GetDefaultTransactOpts("Owner", ctx)
-	callOpts := &bind.CallOpts{Context: ctx}
+	callOpts := &bind.CallOpts{}
 
 	arbOwner, err := precompilesgen.NewArbOwner(types.ArbOwnerAddress, builder.L2.Client)
 	require.NoError(t, err)
