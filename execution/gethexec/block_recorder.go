@@ -188,7 +188,7 @@ func (r *BlockRecorder) RecordBlockCreation(
 	r.updateValidCandidateHdr(prevHeader)
 
 	return &execution.RecordResult{
-		Pos:       pos,
+		Index:     pos,
 		BlockHash: blockHash,
 		Preimages: preimages,
 		UserWasms: recordingdb.UserWasms(),

@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git describe:*)",
+      "Bash(git fetch:*)",
+      "Bash(cat:*)",
+      "Bash(git submodule:*)",
+      "Bash(git log:*)",
+      "Bash(git ls-tree:*)",
+      "Bash(git branch:*)",
+      "Bash(git checkout:*)",
+      "Bash(git stash push:*)",
+      "Bash(git stash:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git merge:*)",
+      "Bash(awk:*)",
+      "Bash(xargs -I {} git checkout --theirs {})",
+      "Bash(xargs git add)",
+      "Bash(for file in .gitignore Dockerfile scripts/check-build.sh util/headerreader/blob_client.go)",
+      "Bash(do git checkout:*)",
+      "Bash(done)",
+      "Bash(for file in arbnode/maintenance.go arbnode/schema.go arbos/l2pricing/model.go arbos/parse_l2.go arbos/tx_processor.go arbstate/inbox.go cmd/datool/datool.go cmd/nitro/init.go cmd/pruning/pruning.go cmd/replay/main.go execution/gethexec/block_recorder.go execution/gethexec/blockchain.go execution/gethexec/contract_adapter.go execution/gethexec/executionengine.go execution/gethexec/express_lane_tracker.go execution/gethexec/sequencer.go execution/nodeInterface/NodeInterface.go staker/bold/bold_staker.go staker/multi_protocol/multi_protocol_staker.go staker/stateless_block_validator.go)",
+      "Bash(go build:*)",
+      "Bash(test:*)",
+      "Bash(git rm:*)",
+      "Bash(make:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

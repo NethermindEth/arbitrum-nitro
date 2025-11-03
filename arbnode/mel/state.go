@@ -37,15 +37,6 @@ type DelayedMessageDatabase interface {
 	) (*DelayedInboxMessage, error)
 }
 
-// DelayedMessageDatabase can read delayed messages by their global index.
-type DelayedMessageDatabase interface {
-	ReadDelayedMessage(
-		ctx context.Context,
-		state *State,
-		index uint64,
-	) (*DelayedInboxMessage, error)
-}
-
 // Defines a basic interface for MEL, including saving states, messages,
 // and delayed messages to a database.
 type StateDatabase interface {
