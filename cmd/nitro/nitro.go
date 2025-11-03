@@ -58,6 +58,7 @@ import (
 	"github.com/offchainlabs/nitro/daprovider"
 	"github.com/offchainlabs/nitro/daprovider/das"
 	"github.com/offchainlabs/nitro/execution/gethexec"
+	"github.com/offchainlabs/nitro/execution/nethexec"
 	_ "github.com/offchainlabs/nitro/execution/nodeInterface"
 	"github.com/offchainlabs/nitro/solgen/go/bridgegen"
 	"github.com/offchainlabs/nitro/solgen/go/precompilesgen"
@@ -561,7 +562,7 @@ func mainImpl() int {
 		}
 	}
 
-	execNode, err := gethexec.CreateExecutionNode(
+	gethNode, err := gethexec.CreateExecutionNode(
 		ctx,
 		stack,
 		chainDb,
@@ -742,9 +743,14 @@ func mainImpl() int {
 
 	gqlConf := nodeConfig.GraphQL
 	if gqlConf.Enable {
-		if err := graphql.New(stack, execNode.Backend.APIBackend(), execNode.FilterSystem, gqlConf.CORSDomain, gqlConf.VHosts); err != nil {
-			log.Error("failed to register the GraphQL service", "err", err)
-			return 1
+		// GraphQL only supported with internal geth execution client
+		if execMode == nethexec.ModeInternalOnly || execMode == nethexec.ModeDualCompare {
+			if err := graphql.New(stack, gethNode.Backend.APIBackend(), gethNode.FilterSystem, gqlConf.CORSDomain, gqlConf.VHosts); err != nil {
+				log.Error("failed to register the GraphQL service", "err", err)
+				return 1
+			}
+		} else {
+			log.Warn("GraphQL is not supported with external execution client mode")
 		}
 	}
 
@@ -778,9 +784,12 @@ func mainImpl() int {
 		}
 	}
 
-	err = execNode.InitializeTimeboost(ctx, chainInfo.ChainConfig)
-	if err != nil {
-		fatalErrChan <- fmt.Errorf("error initializing timeboost: %w", err)
+	// InitializeTimeboost only supported with internal geth execution client
+	if execMode == nethexec.ModeInternalOnly || execMode == nethexec.ModeDualCompare {
+		err = gethNode.InitializeTimeboost(ctx, chainInfo.ChainConfig)
+		if err != nil {
+			fatalErrChan <- fmt.Errorf("error initializing timeboost: %w", err)
+		}
 	}
 
 	err = nil

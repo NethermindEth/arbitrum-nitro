@@ -70,6 +70,7 @@ import (
 	"github.com/offchainlabs/nitro/daprovider/das/dasutil"
 	"github.com/offchainlabs/nitro/deploy"
 	"github.com/offchainlabs/nitro/execution/gethexec"
+	"github.com/offchainlabs/nitro/execution/nethexec"
 	_ "github.com/offchainlabs/nitro/execution/nodeInterface"
 	"github.com/offchainlabs/nitro/solgen/go/bridgegen"
 	"github.com/offchainlabs/nitro/solgen/go/localgen"
@@ -1852,12 +1853,20 @@ func Create2ndNodeWithConfig(
 	switch executionClientMode {
 	case ExecutionClientModeInternal:
 		// Create internal geth execution client
-		currentExec, err = gethexec.CreateExecutionNode(ctx, chainStack, chainDb, blockchain, parentChainClient, configFetcher, 0)
+		currentExec, err = gethexec.CreateExecutionNode(ctx, chainStack, chainDb, blockchain, parentChainClient, configFetcher, big.NewInt(1337), 0)
 		Require(t, err)
 
 	case ExecutionClientModeExternal:
 		// Create external Nethermind execution client
-		nethermindExecClient, err := nethexec.NewNethermindExecutionClient()
+		nethermindUrl := os.Getenv("PR_NETH_RPC_CLIENT_URL")
+		if nethermindUrl == "" {
+			nethermindUrl = "http://localhost:20545"
+		}
+		nethermindWsUrl := os.Getenv("PR_NETH_WS_URL")
+		if nethermindWsUrl == "" {
+			nethermindWsUrl = "ws://localhost:28551"
+		}
+		nethermindExecClient, err := nethexec.NewNethermindExecutionClient(nethermindUrl, nethermindWsUrl)
 		Require(t, err)
 
 		// Call DigestInitMessage to initialize the external execution client with genesis block
@@ -1871,10 +1880,18 @@ func Create2ndNodeWithConfig(
 
 	case ExecutionClientModeComparison:
 		// Create both internal geth and external Nethermind execution clients
-		gethExecClient, err := gethexec.CreateExecutionNode(ctx, chainStack, chainDb, blockchain, parentChainClient, configFetcher, 0)
+		gethExecClient, err := gethexec.CreateExecutionNode(ctx, chainStack, chainDb, blockchain, parentChainClient, configFetcher, big.NewInt(1337), 0)
 		Require(t, err)
 
-		nethermindExecClient, err := nethexec.NewNethermindExecutionClient()
+		nethermindUrl := os.Getenv("PR_NETH_RPC_CLIENT_URL")
+		if nethermindUrl == "" {
+			nethermindUrl = "http://localhost:20545"
+		}
+		nethermindWsUrl := os.Getenv("PR_NETH_WS_URL")
+		if nethermindWsUrl == "" {
+			nethermindWsUrl = "ws://localhost:28551"
+		}
+		nethermindExecClient, err := nethexec.NewNethermindExecutionClient(nethermindUrl, nethermindWsUrl)
 		Require(t, err)
 
 		// Call DigestInitMessage to initialize the external execution client with genesis block
