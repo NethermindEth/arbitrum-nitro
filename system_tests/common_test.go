@@ -96,6 +96,14 @@ import (
 
 type info = *BlockchainTestInfo
 
+type ExecutionClientMode int
+
+const (
+	ExecutionClientModeInternal   ExecutionClientMode = iota + 1 // internal geth
+	ExecutionClientModeExternal                                  // external Nethermind
+	ExecutionClientModeComparison                                // both, compare results
+)
+
 type SecondNodeParams struct {
 	nodeConfig             *arbnode.Config
 	execConfig             *gethexec.Config
@@ -104,6 +112,7 @@ type SecondNodeParams struct {
 	initData               *statetransfer.ArbosInitializationInfo
 	addresses              *chaininfo.RollupAddresses
 	useExecutionClientOnly bool
+	executionClientMode    ExecutionClientMode
 }
 
 type TestClient struct {
@@ -968,9 +977,8 @@ func build2ndNode(
 	}
 
 	testClient := NewTestClient(ctx)
-	testClient.Client, testClient.ConsensusNode, testClient.ExecutionConfigFetcher, testClient.ConsensusConfigFetcher =
-		Create2ndNodeWithConfig(t, ctx, firstNodeTestClient.ConsensusNode, parentChainTestClient.Stack, parentChainInfo, params.initData, params.nodeConfig, params.execConfig, params.stackConfig, valnodeConfig, params.addresses, initMessage, params.useExecutionClientOnly)
-	testClient.ExecNode = getExecNode(t, testClient.ConsensusNode)
+	testClient.Client, testClient.ConsensusNode =
+		Create2ndNodeWithConfig(t, ctx, firstNodeTestClient.ConsensusNode, parentChainTestClient.Stack, parentChainInfo, params.initData, params.nodeConfig, params.execConfig, params.stackConfig, valnodeConfig, params.addresses, initMessage, params.useExecutionClientOnly, params.executionClientMode)
 	testClient.cleanup = func() { testClient.ConsensusNode.StopAndWait() }
 	return testClient, func() { testClient.cleanup() }
 }
@@ -1784,7 +1792,8 @@ func Create2ndNodeWithConfig(
 	addresses *chaininfo.RollupAddresses,
 	initMessage *arbostypes.ParsedInitMessage,
 	useExecutionClientOnly bool,
-) (*ethclient.Client, *arbnode.Node, ConfigFetcher[gethexec.Config], ConfigFetcher[arbnode.Config]) {
+	executionClientMode ExecutionClientMode,
+) (*ethclient.Client, *arbnode.Node) {
 	if nodeConfig == nil {
 		nodeConfig = arbnode.ConfigDefaultL1NonSequencerTest()
 	}
@@ -1831,14 +1840,58 @@ func Create2ndNodeWithConfig(
 
 	AddValNodeIfNeeded(t, ctx, nodeConfig, true, "", valnodeConfig.Wasm.RootPath)
 
-	execConfigFetcher := NewCommonConfigFetcher(execConfig)
-	currentExec, err := gethexec.CreateExecutionNode(ctx, chainStack, chainDb, blockchain, parentChainClient, execConfigFetcher, big.NewInt(1337), 0)
-	Require(t, err)
+	configFetcher := NewCommonConfigFetcher(execConfig)
 
 	var currentNode *arbnode.Node
 	locator, err := server_common.NewMachineLocator(valnodeConfig.Wasm.RootPath)
 	Require(t, err)
+
 	consensusConfigFetcher := NewCommonConfigFetcher(nodeConfig)
+
+	var currentExec nethexec.FullExecutionClient
+	switch executionClientMode {
+	case ExecutionClientModeInternal:
+		// Create internal geth execution client
+		currentExec, err = gethexec.CreateExecutionNode(ctx, chainStack, chainDb, blockchain, parentChainClient, configFetcher, 0)
+		Require(t, err)
+
+	case ExecutionClientModeExternal:
+		// Create external Nethermind execution client
+		nethermindExecClient, err := nethexec.NewNethermindExecutionClient()
+		Require(t, err)
+
+		// Call DigestInitMessage to initialize the external execution client with genesis block
+		if initMessage != nil {
+			result := nethermindExecClient.DigestInitMessage(ctx, initMessage.InitialL1BaseFee, initMessage.SerializedChainConfig)
+			if result == nil {
+				t.Fatal("DigestInitMessage returned nil for external execution client")
+			}
+		}
+		currentExec = nethermindExecClient
+
+	case ExecutionClientModeComparison:
+		// Create both internal geth and external Nethermind execution clients
+		gethExecClient, err := gethexec.CreateExecutionNode(ctx, chainStack, chainDb, blockchain, parentChainClient, configFetcher, 0)
+		Require(t, err)
+
+		nethermindExecClient, err := nethexec.NewNethermindExecutionClient()
+		Require(t, err)
+
+		// Call DigestInitMessage to initialize the external execution client with genesis block
+		if initMessage != nil {
+			result := nethermindExecClient.DigestInitMessage(ctx, initMessage.InitialL1BaseFee, initMessage.SerializedChainConfig)
+			if result == nil {
+				t.Fatal("DigestInitMessage returned nil for external execution client")
+			}
+		}
+
+		// Wrap both in comparison client
+		currentExec = nethexec.NewCompareExecutionClient(gethExecClient, nethermindExecClient, feedErrChan)
+
+	default:
+		t.Fatalf("unsupported execution client mode: %v", executionClientMode)
+	}
+
 	if useExecutionClientOnly {
 		currentNode, err = arbnode.CreateNodeExecutionClient(ctx, chainStack, currentExec, arbDb, consensusConfigFetcher, blockchain.Config(), parentChainClient, addresses, &validatorTxOpts, &sequencerTxOpts, dataSigner, feedErrChan, big.NewInt(1337), nil, locator.LatestWasmModuleRoot())
 	} else {
@@ -1849,11 +1902,29 @@ func Create2ndNodeWithConfig(
 
 	err = currentNode.Start(ctx)
 	Require(t, err)
-	chainClient := ClientForStack(t, chainStack)
+
+	// Connect RPC client based on execution mode
+	var chainClient *ethclient.Client
+	switch executionClientMode {
+	case ExecutionClientModeExternal:
+		// For external execution client, connect directly to Nethermind for RPC calls
+		nethRpcUrl := os.Getenv("PR_NETH_RPC_CLIENT_URL")
+		if nethRpcUrl == "" {
+			nethRpcUrl = "http://localhost:20545"
+		}
+		externalRpcClient, err := rpc.Dial(nethRpcUrl)
+		Require(t, err)
+		chainClient = ethclient.NewClient(externalRpcClient)
+	case ExecutionClientModeInternal, ExecutionClientModeComparison:
+		// For internal and comparison modes, use internal geth client
+		chainClient = ClientForStack(t, chainStack)
+	default:
+		t.Fatalf("unsupported execution client mode: %v", executionClientMode)
+	}
 
 	StartWatchChanErr(t, ctx, feedErrChan, currentNode)
 
-	return chainClient, currentNode, execConfigFetcher, consensusConfigFetcher
+	return chainClient, currentNode
 }
 
 func GetBalance(t *testing.T, ctx context.Context, client *ethclient.Client, account common.Address) *big.Int {

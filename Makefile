@@ -244,6 +244,16 @@ test-go-gas-dimensions: test-go-deps
 	.github/workflows/gotestsum.sh --timeout 120m --run "TestDim(Log|TxOp)" --tags gasdimensionstest --nolog
 	@printf $(done)
 
+.PHONY: test-comparison
+test-comparison: test-go-deps
+	@echo "Running Nethermind comparison test..."
+	@./scripts/run-comparison-test.sh
+
+.PHONY: test-comparison-verbose
+test-comparison-verbose: test-go-deps
+	@echo "Running Nethermind comparison test (verbose mode)..."
+	@./scripts/run-comparison-test.sh --verbose
+
 .PHONY: test-gen-proofs
 test-gen-proofs: \
         $(arbitrator_test_wasms) \
@@ -301,6 +311,129 @@ docker:
 	docker build -t nitro-node --target nitro-node .
 	docker build -t nitro-node-dev --target nitro-node-dev .
 
+.PHONY: run-follower-compare-local
+run-follower-compare-local:
+	@echo "Starting Nitro sequencer follower..."
+	CGO_LDFLAGS=-Wl,-no_warn_duplicate_libraries \
+	PR_EXIT_AFTER_GENESIS=false \
+	PR_IGNORE_CALLSTACK=false \
+	PR_OVERRIDE_FORWARDER_URL=ws://localhost:8548 \
+	target/bin/nitro \
+		--persistent.global-config /tmp/sequencer_follower \
+		--ipc.path /tmp/dev-test/geth.ipc \
+		--conf.file ../arbitrum-nitro-testnode/data/config/sequencer_follower_config_native.json \
+		--node.seq-coordinator.my-url ws://follower:8548 \
+		--execution.nethermind-url http://localhost:20545 \
+		--execution.nethermind-ws-url ws://localhost:28551 \
+		--execution.execution-mode compare \
+		--http.port 7547 \
+		--ws.port 7548
+
+.PHONY: clean-run-follower-compare-local
+clean-run-follower-compare-local: clean-follower run-follower-compare-local
+
+.PHONY: run-follower-compare-sepolia
+run-follower-compare-sepolia:
+	@echo "Starting Nitro sequencer follower (Sepolia with Nethermind)..."
+	@if [ -z "$$SEPOLIA_RPC_API_KEY" ]; then \
+		echo "Error: SEPOLIA_RPC_API_KEY is not set. Please create a .env file or export the variable."; \
+		exit 1; \
+	fi
+	CGO_LDFLAGS=-Wl,-no_warn_duplicate_libraries \
+	PR_EXIT_AFTER_GENESIS=false \
+	PR_IGNORE_CALLSTACK=false \
+	target/bin/nitro \
+		--persistent.global-config /tmp/sequencer_follower \
+		--parent-chain.connection.url=http://209.127.228.66/rpc/$$SEPOLIA_RPC_API_KEY \
+		--parent-chain.blob-client.beacon-url=http://209.127.228.66/consensus/$$SEPOLIA_RPC_API_KEY \
+		--chain.id=421614 \
+		--execution.nethermind-url http://localhost:20545 \
+		--execution.nethermind-ws-url ws://localhost:28551 \
+		--execution.execution-mode compare \
+		--execution.forwarding-target null \
+		--execution.enable-prefetch-block=false \
+		--http.addr=0.0.0.0 \
+		--http.port=8747
+
+.PHONY: clean-run-follower-compare-sepolia
+clean-run-follower-compare-sepolia: clean-follower run-follower-compare-sepolia
+
+.PHONY: run-follower-compare-mainnet
+run-follower-compare-mainnet:
+	@echo "Starting Nitro sequencer follower (Arbitrum One with Nethermind, external-only mode)..."
+	CGO_LDFLAGS=-Wl,-no_warn_duplicate_libraries \
+	PR_IGNORE_CALLSTACK=false \
+	target/bin/nitro \
+		--persistent.global-config /tmp/sequencer_follower_mainnet \
+		--parent-chain.connection.url=http://38.154.254.162:8545 \
+		--parent-chain.blob-client.beacon-url=http://38.154.254.162:4000 \
+		--chain.id=42161 \
+		--chain.name=arb1 \
+		--init.bootstrap-from-execution=true \
+		--init.start-block=22207817 \
+		--execution.nethermind-url=http://localhost:20545 \
+		--execution.nethermind-ws-url ws://localhost:28551 \
+		--execution.execution-mode=external \
+		--validation.wasm.allowed-wasm-module-roots=0x184884e1eb9fefdc158f6c8ac912bb183bf3cf83f0090317e0bc4ac5860baa39 \
+		--execution.forwarding-target=null \
+		--http.addr=0.0.0.0 \
+		--http.port=8747
+
+.PHONY: clean-run-follower-compare-mainnet
+clean-run-follower-compare-mainnet: clean-follower-mainnet run-follower-compare-mainnet
+
+.PHONY: clean-follower
+clean-follower:
+	@echo "Cleaning sequencer follower directory..."
+	@rm -rf /tmp/sequencer_follower
+
+.PHONY: clean-follower-mainnet
+clean-follower-mainnet:
+	@echo "Cleaning sequencer follower (Mainnet) directory..."
+	@rm -rf /tmp/sequencer_follower_mainnet
+
+.PHONY: run-sequencer
+run-sequencer: clean-sequencer
+	@echo "Starting Nitro sequencer..."
+	CGO_LDFLAGS=-Wl,-no_warn_duplicate_libraries \
+	PR_EXIT_AFTER_GENESIS=false \
+	PR_IGNORE_CALLSTACK=false \
+	target/bin/nitro \
+		--persistent.global-config /tmp/sequencer \
+		--ipc.path /tmp/dev-test/geth.ipc \
+		--conf.file ../arbitrum-nitro-testnode/data/config/sequencer_config_native.json \
+		--node.feed.output.enable \
+		--node.feed.output.port 9642 \
+		--http.api net,web3,eth,txpool,debug,timeboost,auctioneer \
+		--http.port 8547 \
+		--ws.port 8548
+
+.PHONY: clean-sequencer
+clean-sequencer:
+	@echo "Cleaning sequencer directory..."
+	@rm -rf /tmp/sequencer
+
+.PHONY: run-sequencer-nethermind
+run-sequencer-nethermind: clean-sequencer-nethermind
+	@echo "Starting Nitro sequencer with external Nethermind EL..."
+	@echo "Ensure Nethermind is running at http://localhost:20545"
+	CGO_LDFLAGS=-Wl,-no_warn_duplicate_libraries \
+	PR_EXIT_AFTER_GENESIS=false PR_IGNORE_CALLSTACK=false \
+	target/bin/nitro \
+		--persistent.global-config /tmp/sequencer_neth \
+		--ipc.path /tmp/dev-test/geth.ipc \
+		--conf.file ../arbitrum-nitro-testnode/data/config/sequencer_config_native.json \
+		--node.feed.output.enable --node.feed.output.port 9642 \
+		--execution.nethermind-url http://localhost:20545 \
+		--execution.nethermind-ws-url ws://localhost:28551 \
+		--execution.execution-mode compare \
+		--http.api net,web3,eth,txpool,debug,timeboost,auctioneer \
+		--http.port 8547 --ws.port 8548
+
+.PHONY: clean-sequencer-nethermind
+clean-sequencer-nethermind:
+	@echo "Cleaning sequencer (Nethermind) directory..."
+	@rm -rf /tmp/sequencer_neth
 # regular build rules
 
 $(output_root)/bin/nitro: $(DEP_PREDICATE) build-node-deps

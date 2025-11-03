@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/knadh/koanf"
 	"github.com/knadh/koanf/providers/confmap"
 	"github.com/spf13/pflag"
@@ -442,7 +443,45 @@ func mainImpl() int {
 		return 1
 	}
 
-	chainDb, l2BlockChain, err := openInitializeChainDb(ctx, stack, nodeConfig, new(big.Int).SetUint64(nodeConfig.Chain.ID), gethexec.DefaultCacheConfigFor(&nodeConfig.Execution.Caching), &nodeConfig.Execution.StylusTarget, tracer, &nodeConfig.Persistent, l1Client, rollupAddrs)
+	execMode := nethexec.GetExecutionMode(&nodeConfig.Execution)
+
+	var initDigester nethexec.InitMessageDigester
+	switch execMode {
+	case nethexec.ModeInternalOnly:
+		initDigester = nethexec.NewFakeRemoteExecutionRpcClient()
+	case nethexec.ModeDualCompare, nethexec.ModeExternalOnly:
+		rpcClient, newClientErr := nethexec.NewNethRpcClient(nodeConfig.Execution.NethermindUrl, nodeConfig.Execution.NethermindWsUrl)
+		if newClientErr != nil {
+			log.Crit("failed to create real RPC client", "err", newClientErr)
+			return 1
+		}
+		deferFuncs = append(deferFuncs, func() { rpcClient.Close() })
+		initDigester = rpcClient
+	default:
+		log.Crit("invalid execution mode", "mode", execMode)
+		return 1
+	}
+
+	if nodeConfig.PrometheusPushgateway.Enabled {
+		stopPusher := nethexec.StartPrometheusPusher(
+			ctx,
+			nodeConfig.PrometheusPushgateway.URL,
+			nodeConfig.PrometheusPushgateway.JobName,
+			nodeConfig.PrometheusPushgateway.Prefix,
+			nodeConfig.PrometheusPushgateway.Instance,
+			nodeConfig.PrometheusPushgateway.UpdateInterval,
+			metrics.DefaultRegistry,
+		)
+		deferFuncs = append(deferFuncs, stopPusher)
+		log.Info("Started Prometheus Pushgateway pusher",
+			"url", nodeConfig.PrometheusPushgateway.URL,
+			"job", nodeConfig.PrometheusPushgateway.JobName,
+			"prefix", nodeConfig.PrometheusPushgateway.Prefix,
+			"instance", nodeConfig.PrometheusPushgateway.Instance,
+			"interval", nodeConfig.PrometheusPushgateway.UpdateInterval)
+	}
+
+	chainDb, l2BlockChain, err := openInitializeChainDb(ctx, stack, nodeConfig, new(big.Int).SetUint64(nodeConfig.Chain.ID), gethexec.DefaultCacheConfigFor(&nodeConfig.Execution.Caching), &nodeConfig.Execution.StylusTarget, tracer, &nodeConfig.Persistent, l1Client, initDigester, rollupAddrs)
 	if l2BlockChain != nil {
 		deferFuncs = append(deferFuncs, func() { l2BlockChain.Stop() })
 	}
@@ -543,6 +582,32 @@ func mainImpl() int {
 			log.Error("failed to create machine locator: %w", err)
 		}
 		wasmModuleRoot = locator.LatestWasmModuleRoot()
+	}
+
+	var execNode nethexec.FullExecutionClient
+	switch execMode {
+	case nethexec.ModeInternalOnly:
+		execNode = gethNode
+	case nethexec.ModeExternalOnly:
+		execNode, err = nethexec.NewNethermindExecutionClient(
+			nodeConfig.Execution.NethermindUrl,
+			nodeConfig.Execution.NethermindWsUrl,
+		)
+		if err != nil {
+			log.Error("failed to create nethermind execution client", "err", err)
+			return 1
+		}
+	case nethexec.ModeDualCompare:
+		nmExec, err := nethexec.NewNethermindExecutionClient(
+			nodeConfig.Execution.NethermindUrl,
+			nodeConfig.Execution.NethermindWsUrl,
+		)
+		if err != nil {
+			log.Error("failed to create nethermind execution client", "err", err)
+			return 1
+		}
+		execNode = nethexec.NewCompareExecutionClient(gethNode, nmExec, fatalErrChan)
+		log.Info("Created compare execution client")
 	}
 
 	currentNode, err := arbnode.CreateNodeFullExecutionClient(
@@ -740,29 +805,30 @@ func mainImpl() int {
 }
 
 type NodeConfig struct {
-	Conf                   genericconf.ConfConfig          `koanf:"conf" reload:"hot"`
-	Node                   arbnode.Config                  `koanf:"node" reload:"hot"`
-	Execution              gethexec.Config                 `koanf:"execution" reload:"hot"`
-	Validation             valnode.Config                  `koanf:"validation" reload:"hot"`
-	ParentChain            conf.ParentChainConfig          `koanf:"parent-chain" reload:"hot"`
-	Chain                  conf.L2Config                   `koanf:"chain"`
-	LogLevel               string                          `koanf:"log-level" reload:"hot"`
-	LogType                string                          `koanf:"log-type" reload:"hot"`
-	FileLogging            genericconf.FileLoggingConfig   `koanf:"file-logging" reload:"hot"`
-	Persistent             conf.PersistentConfig           `koanf:"persistent"`
-	HTTP                   genericconf.HTTPConfig          `koanf:"http"`
-	WS                     genericconf.WSConfig            `koanf:"ws"`
-	IPC                    genericconf.IPCConfig           `koanf:"ipc"`
-	Auth                   genericconf.AuthRPCConfig       `koanf:"auth"`
-	GraphQL                genericconf.GraphQLConfig       `koanf:"graphql"`
-	Metrics                bool                            `koanf:"metrics"`
-	MetricsServer          genericconf.MetricsServerConfig `koanf:"metrics-server"`
-	PProf                  bool                            `koanf:"pprof"`
-	PprofCfg               genericconf.PProf               `koanf:"pprof-cfg"`
-	Init                   conf.InitConfig                 `koanf:"init"`
-	Rpc                    genericconf.RpcConfig           `koanf:"rpc"`
-	BlocksReExecutor       blocksreexecutor.Config         `koanf:"blocks-reexecutor"`
-	EnsureRollupDeployment bool                            `koanf:"ensure-rollup-deployment" reload:"hot"`
+	Conf                   genericconf.ConfConfig                  `koanf:"conf" reload:"hot"`
+	Node                   arbnode.Config                          `koanf:"node" reload:"hot"`
+	Execution              gethexec.Config                         `koanf:"execution" reload:"hot"`
+	Validation             valnode.Config                          `koanf:"validation" reload:"hot"`
+	ParentChain            conf.ParentChainConfig                  `koanf:"parent-chain" reload:"hot"`
+	Chain                  conf.L2Config                           `koanf:"chain"`
+	LogLevel               string                                  `koanf:"log-level" reload:"hot"`
+	LogType                string                                  `koanf:"log-type" reload:"hot"`
+	FileLogging            genericconf.FileLoggingConfig           `koanf:"file-logging" reload:"hot"`
+	Persistent             conf.PersistentConfig                   `koanf:"persistent"`
+	HTTP                   genericconf.HTTPConfig                  `koanf:"http"`
+	WS                     genericconf.WSConfig                    `koanf:"ws"`
+	IPC                    genericconf.IPCConfig                   `koanf:"ipc"`
+	Auth                   genericconf.AuthRPCConfig               `koanf:"auth"`
+	GraphQL                genericconf.GraphQLConfig               `koanf:"graphql"`
+	Metrics                bool                                    `koanf:"metrics"`
+	MetricsServer          genericconf.MetricsServerConfig         `koanf:"metrics-server"`
+	PrometheusPushgateway  genericconf.PrometheusPushgatewayConfig `koanf:"prometheus-pushgateway"`
+	PProf                  bool                                    `koanf:"pprof"`
+	PprofCfg               genericconf.PProf                       `koanf:"pprof-cfg"`
+	Init                   conf.InitConfig                         `koanf:"init"`
+	Rpc                    genericconf.RpcConfig                   `koanf:"rpc"`
+	BlocksReExecutor       blocksreexecutor.Config                 `koanf:"blocks-reexecutor"`
+	EnsureRollupDeployment bool                                    `koanf:"ensure-rollup-deployment" reload:"hot"`
 }
 
 var NodeConfigDefault = NodeConfig{
@@ -783,6 +849,7 @@ var NodeConfigDefault = NodeConfig{
 	GraphQL:                genericconf.GraphQLConfigDefault,
 	Metrics:                false,
 	MetricsServer:          genericconf.MetricsServerConfigDefault,
+	PrometheusPushgateway:  genericconf.PrometheusPushgatewayConfigDefault,
 	Init:                   conf.InitConfigDefault,
 	Rpc:                    genericconf.DefaultRpcConfig,
 	PProf:                  false,
@@ -809,6 +876,7 @@ func NodeConfigAddOptions(f *pflag.FlagSet) {
 	genericconf.GraphQLConfigAddOptions("graphql", f)
 	f.Bool("metrics", NodeConfigDefault.Metrics, "enable metrics")
 	genericconf.MetricsServerAddOptions("metrics-server", f)
+	genericconf.PrometheusPushgatewayAddOptions("prometheus-pushgateway", f)
 	f.Bool("pprof", NodeConfigDefault.PProf, "enable pprof")
 	genericconf.PProfAddOptions("pprof-cfg", f)
 
