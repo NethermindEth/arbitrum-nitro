@@ -1,5 +1,7 @@
 //go:build toxiproxy
 
+package rpcclient
+
 import (
 	"context"
 	"testing"
