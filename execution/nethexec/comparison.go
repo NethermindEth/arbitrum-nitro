@@ -112,9 +112,10 @@ func (c *comparator) compareError(
 func compare[T any](op string, internal T, internalErr error, external T, externalErr error, fatalErrChan chan error, logger *slog.Logger) error {
 	var err error
 	switch {
-	case errors.Is(internalErr, externalErr):
-		return internalErr
 	case internalErr != nil:
+		if errors.Is(internalErr, externalErr) {
+			return internalErr
+		}
 		err = &ComparisonError{
 			Operation: op,
 			Internal:  internalErr,
