@@ -722,17 +722,26 @@ func openInitializeChainDb(ctx context.Context, stack *node.Node, config *NodeCo
 		}
 
 		// Open databases
-		chainData, err := stack.OpenDatabaseWithFreezerWithExtraOptions("l2chaindata",
-			config.Execution.Caching.DatabaseCache, config.Persistent.Handles,
-			config.Persistent.Ancient, "l2chaindata/", false,
-			persistentConfig.Pebble.ExtraOptions("l2chaindata"))
+		chainData, err := stack.OpenDatabaseWithOptions("l2chaindata", node.DatabaseOptions{
+			AncientsDirectory:  config.Persistent.Ancient,
+			MetricsNamespace:   "l2chaindata/",
+			Cache:              config.Execution.Caching.DatabaseCache,
+			Handles:            config.Persistent.Handles,
+			ReadOnly:           false,
+			PebbleExtraOptions: persistentConfig.Pebble.ExtraOptions("l2chaindata"),
+		})
 		if err != nil {
 			return nil, nil, err
 		}
 
-		wasmDb, err := stack.OpenDatabaseWithExtraOptions("wasm",
-			config.Execution.Caching.DatabaseCache, config.Persistent.Handles,
-			"wasm/", false, persistentConfig.Pebble.ExtraOptions("wasm"))
+		wasmDb, err := stack.OpenDatabaseWithOptions("wasm", node.DatabaseOptions{
+			MetricsNamespace:   "wasm/",
+			Cache:              config.Execution.Caching.DatabaseCache,
+			Handles:            config.Persistent.Handles,
+			ReadOnly:           false,
+			PebbleExtraOptions: persistentConfig.Pebble.ExtraOptions("wasm"),
+			NoFreezer:          true, // wasmDb doesn't need a freezer
+		})
 		if err != nil {
 			return nil, nil, err
 		}
