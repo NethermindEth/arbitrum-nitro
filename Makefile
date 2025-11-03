@@ -36,7 +36,7 @@ UNAME_S := $(shell uname -s)
 # In Mac OSX, there are a lot of warnings emitted if these environment variables aren't set.
 ifeq ($(UNAME_S), Darwin)
   export MACOSX_DEPLOYMENT_TARGET := $(shell sw_vers -productVersion)
-  export CGO_LDFLAGS := -Wl,-no_warn_duplicate_libraries,-w
+  export CGO_LDFLAGS := -Wl,-no_warn_duplicate_libraries
 endif
 
 precompile_names = AddressTable Aggregator BLS Debug FunctionTable GasInfo Info osTest Owner RetryableTx Statistics Sys
@@ -116,10 +116,6 @@ stylus_lang_rust = $(wildcard $(rust_sdk)/*/src/*.rs $(rust_sdk)/*/src/*/*.rs $(
 stylus_lang_c    = $(wildcard $(c_sdk)/*/*.c $(c_sdk)/*/*.h)
 stylus_lang_bf   = $(wildcard arbitrator/langs/bf/src/*.* arbitrator/langs/bf/src/*.toml)
 
-STYLUS_NIGHTLY_VER ?= "+nightly"
-
-cargo_nightly = cargo $(STYLUS_NIGHTLY_VER) build -Z build-std=std,panic_abort -Z build-std-features=panic_immediate_abort
-
 get_stylus_test_wasm = $(stylus_test_dir)/$(1)/$(wasm32_unknown)/$(1).wasm
 get_stylus_test_rust = $(wildcard $(stylus_test_dir)/$(1)/*.toml $(stylus_test_dir)/$(1)/src/*.rs) $(stylus_cargo) $(stylus_lang_rust)
 get_stylus_test_c    = $(wildcard $(c_sdk)/examples/$(1)/*.c $(c_sdk)/examples/$(1)/*.h) $(stylus_lang_c)
@@ -169,11 +165,7 @@ all: build build-replay-env test-gen-proofs
 	@touch .make/all
 
 .PHONY: build
-build: $(patsubst %,$(output_root)/bin/%, nitro deploy relay daprovider daserver autonomous-auctioneer bidder-client datool el-proxy mockexternalsigner seq-coordinator-invalidate nitro-val seq-coordinator-manager dbconv genesis-generator)
-	@printf $(done)
-
-.PHONY: build-nitro
-build-nitro: $(patsubst %,$(output_root)/bin/%, nitro)
+build: $(patsubst %,$(output_root)/bin/%, nitro deploy relay daprovider daserver autonomous-auctioneer bidder-client datool blobtool el-proxy mockexternalsigner seq-coordinator-invalidate nitro-val seq-coordinator-manager dbconv genesis-generator)
 	@printf $(done)
 
 .PHONY: build-node-deps
@@ -309,101 +301,6 @@ docker:
 	docker build -t nitro-node --target nitro-node .
 	docker build -t nitro-node-dev --target nitro-node-dev .
 
-.PHONY: run-follower-compare-local
-run-follower-compare-local:
-	@echo "Starting Nitro sequencer follower..."
-	CGO_LDFLAGS=-Wl,-no_warn_duplicate_libraries \
-	PR_EXIT_AFTER_GENESIS=false \
-	PR_IGNORE_CALLSTACK=false \
-	PR_NETH_RPC_CLIENT_URL=http://localhost:20545 \
-	PR_NETH_WS_CLIENT_URL=ws://localhost:28551 \
-	PR_OVERRIDE_FORWARDER_URL=ws://localhost:8548 \
-	PR_EXECUTION_MODE=compare \
-	target/bin/nitro \
-		--persistent.global-config /tmp/sequencer_follower \
-		--ipc.path /tmp/dev-test/geth.ipc \
-		--conf.file ../arbitrum-nitro-testnode/data/config/sequencer_follower_config_native.json \
-		--node.seq-coordinator.my-url ws://follower:8548 \
-		--http.port 7547 \
-		--ws.port 7548
-
-.PHONY: clean-run-follower-compare-local
-clean-run-follower-compare-local: clean-follower run-follower-compare-local
-
-.PHONY: run-follower-compare-sepolia
-run-follower-compare-sepolia:
-	@echo "Starting Nitro sequencer follower (Sepolia with Nethermind)..."
-	@if [ -z "$$SEPOLIA_RPC_API_KEY" ]; then \
-		echo "Error: SEPOLIA_RPC_API_KEY is not set. Please create a .env file or export the variable."; \
-		exit 1; \
-	fi
-	CGO_LDFLAGS=-Wl,-no_warn_duplicate_libraries \
-	PR_EXIT_AFTER_GENESIS=false \
-	PR_IGNORE_CALLSTACK=false \
-	PR_NETH_RPC_CLIENT_URL=http://localhost:20545 \
-	PR_NETH_WS_CLIENT_URL=ws://localhost:28551 \
-	PR_EXECUTION_MODE=compare \
-	target/bin/nitro \
-		--persistent.global-config /tmp/sequencer_follower \
-		--parent-chain.connection.url=http://209.127.228.66/rpc/$$SEPOLIA_RPC_API_KEY \
-		--parent-chain.blob-client.beacon-url=http://209.127.228.66/consensus/$$SEPOLIA_RPC_API_KEY \
-		--chain.id=421614 \
-		--execution.forwarding-target null \
-		--execution.enable-prefetch-block=false \
-		--http.addr=0.0.0.0 \
-		--http.port=8747
-
-.PHONY: clean-run-follower-compare-sepolia
-clean-run-follower-compare-sepolia: clean-follower run-follower-compare-sepolia
-
-.PHONY: clean-follower
-clean-follower:
-	@echo "Cleaning sequencer follower directory..."
-	@rm -rf /tmp/sequencer_follower
-
-.PHONY: run-sequencer
-run-sequencer: clean-sequencer
-	@echo "Starting Nitro sequencer..."
-	CGO_LDFLAGS=-Wl,-no_warn_duplicate_libraries \
-	PR_EXIT_AFTER_GENESIS=false \
-	PR_IGNORE_CALLSTACK=false \
-	target/bin/nitro \
-		--persistent.global-config /tmp/sequencer \
-		--ipc.path /tmp/dev-test/geth.ipc \
-		--conf.file ../arbitrum-nitro-testnode/data/config/sequencer_config_native.json \
-		--node.feed.output.enable \
-		--node.feed.output.port 9642 \
-		--http.api net,web3,eth,txpool,debug,timeboost,auctioneer \
-		--http.port 8547 \
-		--ws.port 8548
-
-.PHONY: clean-sequencer
-clean-sequencer:
-	@echo "Cleaning sequencer directory..."
-	@rm -rf /tmp/sequencer
-
-.PHONY: run-sequencer-nethermind
-run-sequencer-nethermind: clean-sequencer-nethermind
-	@echo "Starting Nitro sequencer with external Nethermind EL..."
-	@echo "Ensure Nethermind is running at http://localhost:20545"
-	CGO_LDFLAGS=-Wl,-no_warn_duplicate_libraries \
-	PR_EXIT_AFTER_GENESIS=false PR_IGNORE_CALLSTACK=false \
-	PR_EXECUTION_MODE=compare \
-	PR_NETH_RPC_CLIENT_URL=http://localhost:20545 \
-	PR_NETH_WS_CLIENT_URL=ws://localhost:28551 \
-	target/bin/nitro \
-		--persistent.global-config /tmp/sequencer_neth \
-		--ipc.path /tmp/dev-test/geth.ipc \
-		--conf.file ../arbitrum-nitro-testnode/data/config/sequencer_config_native.json \
-		--node.feed.output.enable --node.feed.output.port 9642 \
-		--http.api net,web3,eth,txpool,debug,timeboost,auctioneer \
-		--http.port 8547 --ws.port 8548
-
-.PHONY: clean-sequencer-nethermind
-clean-sequencer-nethermind:
-	@echo "Cleaning sequencer (Nethermind) directory..."
-	@rm -rf /tmp/sequencer_neth
-
 # regular build rules
 
 $(output_root)/bin/nitro: $(DEP_PREDICATE) build-node-deps
@@ -432,6 +329,9 @@ $(output_root)/bin/el-proxy: $(DEP_PREDICATE) build-node-deps
 
 $(output_root)/bin/datool: $(DEP_PREDICATE) build-node-deps
 	go build $(GOLANG_PARAMS) -o $@ "$(CURDIR)/cmd/datool"
+
+$(output_root)/bin/blobtool: $(DEP_PREDICATE) build-node-deps
+	go build $(GOLANG_PARAMS) -o $@ "$(CURDIR)/cmd/blobtool"
 
 $(output_root)/bin/genesis-generator: $(DEP_PREDICATE) build-node-deps
 	go build $(GOLANG_PARAMS) -o $@ "$(CURDIR)/cmd/genesis-generator"
@@ -572,67 +472,67 @@ $(stylus_test_dir)/%.wasm: $(stylus_test_dir)/%.b $(stylus_lang_bf)
 	cargo run --manifest-path arbitrator/langs/bf/Cargo.toml $< -o $@
 
 $(stylus_test_keccak_wasm): $(stylus_test_keccak_src)
-	$(cargo_nightly) --manifest-path $< --release --config $(stylus_cargo)
+	cargo build --manifest-path $< --release --config $(stylus_cargo)
 	./scripts/remove_reference_types.sh $@
 	@touch -c $@ # cargo might decide to not rebuild the binary
 
 $(stylus_test_keccak-100_wasm): $(stylus_test_keccak-100_src)
-	$(cargo_nightly) --manifest-path $< --release --config $(stylus_cargo)
+	cargo build --manifest-path $< --release --config $(stylus_cargo)
 	./scripts/remove_reference_types.sh $@
 	@touch -c $@ # cargo might decide to not rebuild the binary
 
 $(stylus_test_fallible_wasm): $(stylus_test_fallible_src)
-	$(cargo_nightly) --manifest-path $< --release --config $(stylus_cargo)
+	cargo build --manifest-path $< --release --config $(stylus_cargo)
 	./scripts/remove_reference_types.sh $@
 	@touch -c $@ # cargo might decide to not rebuild the binary
 
 $(stylus_test_storage_wasm): $(stylus_test_storage_src)
-	$(cargo_nightly) --manifest-path $< --release --config $(stylus_cargo)
+	cargo build --manifest-path $< --release --config $(stylus_cargo)
 	./scripts/remove_reference_types.sh $@
 	@touch -c $@ # cargo might decide to not rebuild the binary
 
 $(stylus_test_multicall_wasm): $(stylus_test_multicall_src)
-	$(cargo_nightly) --manifest-path $< --release --config $(stylus_cargo)
+	cargo build --manifest-path $< --release --config $(stylus_cargo)
 	./scripts/remove_reference_types.sh $@
 	@touch -c $@ # cargo might decide to not rebuild the binary
 
 $(stylus_test_log_wasm): $(stylus_test_log_src)
-	$(cargo_nightly) --manifest-path $< --release --config $(stylus_cargo)
+	cargo build --manifest-path $< --release --config $(stylus_cargo)
 	./scripts/remove_reference_types.sh $@
 	@touch -c $@ # cargo might decide to not rebuild the binary
 
 $(stylus_test_create_wasm): $(stylus_test_create_src)
-	$(cargo_nightly) --manifest-path $< --release --config $(stylus_cargo)
+	cargo build --manifest-path $< --release --config $(stylus_cargo)
 	./scripts/remove_reference_types.sh $@
 	@touch -c $@ # cargo might decide to not rebuild the binary
 
 $(stylus_test_math_wasm): $(stylus_test_math_src)
-	$(cargo_nightly) --manifest-path $< --release --config $(stylus_cargo)
+	cargo build --manifest-path $< --release --config $(stylus_cargo)
 	./scripts/remove_reference_types.sh $@
 	@touch -c $@ # cargo might decide to not rebuild the binary
 
 $(stylus_test_evm-data_wasm): $(stylus_test_evm-data_src)
-	$(cargo_nightly) --manifest-path $< --release --config $(stylus_cargo)
+	cargo build --manifest-path $< --release --config $(stylus_cargo)
 	./scripts/remove_reference_types.sh $@
 	@touch -c $@ # cargo might decide to not rebuild the binary
 
 $(stylus_test_read-return-data_wasm): $(stylus_test_read-return-data_src)
-	$(cargo_nightly) --manifest-path $< --release --config $(stylus_cargo)
+	cargo build --manifest-path $< --release --config $(stylus_cargo)
 	./scripts/remove_reference_types.sh $@
 	@touch -c $@ # cargo might decide to not rebuild the binary
 
 $(stylus_test_sdk-storage_wasm): $(stylus_test_sdk-storage_src)
-	$(cargo_nightly) --manifest-path $< --release --config $(stylus_cargo)
+	cargo build --manifest-path $< --release --config $(stylus_cargo)
 	./scripts/remove_reference_types.sh $@
 	@touch -c $@ # cargo might decide to not rebuild the binary
 
 $(stylus_test_erc20_wasm): $(stylus_test_erc20_src)
-	$(cargo_nightly) --manifest-path $< --release --config $(stylus_cargo)
+	cargo build --manifest-path $< --release --config $(stylus_cargo)
 	./scripts/remove_reference_types.sh $@
 	@touch -c $@ # cargo might decide to not rebuild the binary
 
 $(stylus_test_hostio-test_wasm): $(stylus_test_hostio-test_src)
-	$(cargo_nightly) --manifest-path $< --release --config $(stylus_cargo)
+	cargo build --manifest-path $< --release --config $(stylus_cargo)
 	./scripts/remove_reference_types.sh $@
 	@touch -c $@ # cargo might decide to not rebuild the binary
 
@@ -712,14 +612,14 @@ contracts/test/prover/proofs/%.json: $(arbitrator_cases)/%.wasm $(prover_bin)
 	yarn --cwd contracts build:forge:yul
 	yarn --cwd contracts-legacy build
 	yarn --cwd contracts-legacy build:forge:yul
-	make -C contracts-local build
+	+make -C contracts-local build
 	@touch $@
 
 .make/yarndeps: $(DEP_PREDICATE) */package.json */yarn.lock $(ORDER_ONLY_PREDICATE) .make
 	npm --prefix safe-smart-account install
 	yarn --cwd contracts install
 	yarn --cwd contracts-legacy install
-	make -C contracts-local install
+	+make -C contracts-local install
 	@touch $@
 
 .make/cbrotli-lib: $(DEP_PREDICATE) $(ORDER_ONLY_PREDICATE) .make
