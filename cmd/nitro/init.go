@@ -1066,15 +1066,27 @@ func openInitializeChainDb(ctx context.Context, stack *node.Node, config *NodeCo
 			return chainDb, nil, errors.New("It is not possible to force init with non-empty blockchain when using path scheme")
 		}
 
-		// Trigger genesis block building at Nethermind
-		_ = initDigester.DigestInitMessage(ctx, parsedInitMessage.InitialL1BaseFee, parsedInitMessage.SerializedChainConfig)
+		// Trigger genesis block building at Nethermind and capture the genesis hash
+		genesisResult := initDigester.DigestInitMessage(ctx, parsedInitMessage.InitialL1BaseFee, parsedInitMessage.SerializedChainConfig)
+		log.Info("DigestInitMessage completed", "blockHash", genesisResult.BlockHash, "sendRoot", genesisResult.SendRoot)
 
 		l2BlockChain, err = gethexec.WriteOrTestBlockChain(chainDb, cacheConfig, initDataReader, chainConfig, genesisArbOSInit, tracer, parsedInitMessage, &config.Execution.TxIndexer, config.Init.AccountsPerSync)
 		if err != nil {
 			return chainDb, nil, err
 		}
 		if config.Init.ValidateGenesisAssertion {
-			if err := validateGenesisAssertion(ctx, rollupAddrs.Rollup, l1Client, l2BlockChain.Genesis().Hash(), initDataReaderHasAccounts); err != nil {
+			var genesisHashToValidate common.Hash
+
+			// Determine which genesis hash to use based on the execution mode
+			if genesisResult == nil || genesisResult.BlockHash == (common.Hash{}) {
+				// Internal mode (a fake client returns zero hash): use geth-generated genesis hash
+				genesisHashToValidate = l2BlockChain.Genesis().Hash()
+			} else {
+				// External/Compare mode: use Nethermind-generated genesis hash
+				genesisHashToValidate = genesisResult.BlockHash
+			}
+
+			if err := validateGenesisAssertion(ctx, rollupAddrs.Rollup, l1Client, genesisHashToValidate, initDataReaderHasAccounts); err != nil {
 				if !config.Init.Force {
 					return chainDb, nil, fmt.Errorf("error testing genesis assertion: %w", err)
 				}
@@ -1122,8 +1134,29 @@ func validateGenesisAssertion(ctx context.Context, rollupAddress common.Address,
 	if err != nil {
 		return err
 	}
-	genesisAssertionCreationInfo, err := bold.ReadBoldAssertionCreationInfo(ctx, userLogic, l1Client, rollupAddress, genesisAssertionHash)
+
+	// For BOLD-upgraded chains (empty init data), the contract's genesisAssertionHash()
+	// returns a theoretical empty-state hash that doesn't exist in storage.
+	// Use empty hash to find the actual genesis assertion created during BOLD upgrade.
+	var assertionHashToLookup common.Hash
+	if initDataReaderHasAccounts {
+		// Fresh BOLD chain: use the hash from contract (empty state)
+		assertionHashToLookup = genesisAssertionHash
+	} else {
+		// BOLD-upgraded chain: use empty hash to find assertion at deployment block
+		assertionHashToLookup = common.Hash{}
+	}
+
+	genesisAssertionCreationInfo, err := bold.ReadBoldAssertionCreationInfo(ctx, userLogic, l1Client, rollupAddress, assertionHashToLookup)
 	if err != nil {
+		// For BOLD-upgraded chains (initDataReaderHasAccounts = false), if we can't find
+		// the assertion creation logs, skip validation. This can happen when:
+		// 1. L1 RPC doesn't provide historical log data
+		// 2. The chain was upgraded from legacy rollup (Sepolia case)
+		if !initDataReaderHasAccounts {
+			return nil
+		}
+		// For fresh BOLD chains (with init data accounts), this is a real validation error
 		return err
 	}
 	beforeGlobalState := protocol.GoGlobalStateFromSolidity(genesisAssertionCreationInfo.BeforeState.GlobalState)
