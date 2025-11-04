@@ -79,6 +79,7 @@ type TransactionStreamerConfig struct {
 	ExecuteMessageLoopDelay time.Duration `koanf:"execute-message-loop-delay" reload:"hot"`
 	SyncTillBlock           uint64        `koanf:"sync-till-block"`
 	TrackBlockMetadataFrom  uint64        `koanf:"track-block-metadata-from"`
+	BulkDigestMessage       bool          `koanf:"bulk-digest-message"`
 }
 
 type TransactionStreamerConfigFetcher func() *TransactionStreamerConfig
@@ -89,6 +90,7 @@ var DefaultTransactionStreamerConfig = TransactionStreamerConfig{
 	ExecuteMessageLoopDelay: time.Millisecond * 100,
 	SyncTillBlock:           0,
 	TrackBlockMetadataFrom:  0,
+	BulkDigestMessage:       false,
 }
 
 var TestTransactionStreamerConfig = TransactionStreamerConfig{
@@ -97,6 +99,7 @@ var TestTransactionStreamerConfig = TransactionStreamerConfig{
 	ExecuteMessageLoopDelay: time.Millisecond,
 	SyncTillBlock:           0,
 	TrackBlockMetadataFrom:  0,
+	BulkDigestMessage:       false,
 }
 
 func TransactionStreamerConfigAddOptions(prefix string, f *flag.FlagSet) {
@@ -105,6 +108,7 @@ func TransactionStreamerConfigAddOptions(prefix string, f *flag.FlagSet) {
 	f.Duration(prefix+".execute-message-loop-delay", DefaultTransactionStreamerConfig.ExecuteMessageLoopDelay, "delay when polling calls to execute messages")
 	f.Uint64(prefix+".sync-till-block", DefaultTransactionStreamerConfig.SyncTillBlock, "node will not sync past this block")
 	f.Uint64(prefix+".track-block-metadata-from", DefaultTransactionStreamerConfig.TrackBlockMetadataFrom, "block number to start saving blockmetadata, 0 to disable")
+	f.Bool(prefix+".bulk-digest-message", DefaultTransactionStreamerConfig.BulkDigestMessage, "call batched DigestMessage variant")
 }
 
 func NewTransactionStreamer(
@@ -1359,58 +1363,129 @@ func (s *TransactionStreamer) ExecuteNextMsg(ctx context.Context) bool {
 		return false
 	}
 
+	log.Info("ExecuteNextMsg exec pre check", "execHeadMsgIdx", execHeadMsgIdx, "consensus", consensusHeadMsgIdx, "syncTillMessage", s.syncTillMessage)
+
 	if execHeadMsgIdx >= consensusHeadMsgIdx ||
 		(s.syncTillMessage > 0 && execHeadMsgIdx >= s.syncTillMessage) {
 		return false
 	}
-	msgIdxToExecute := execHeadMsgIdx + 1
 
-	msgAndBlockInfo, err := s.getMessageWithMetadataAndBlockInfo(msgIdxToExecute)
-	if err != nil {
-		log.Error("ExecuteNextMsg failed to readMessage", "err", err, "msgIdxToExecute", msgIdxToExecute)
-		return false
-	}
-	var msgForPrefetch *arbostypes.MessageWithMetadata
-	if msgIdxToExecute+1 <= consensusHeadMsgIdx {
-		msg, err := s.GetMessage(msgIdxToExecute + 1)
+	if s.config().BulkDigestMessage {
+		var msgAndBlockInfos []*arbostypes.MessageWithMetadataAndBlockInfo
+		var msgsOnly []*arbostypes.MessageWithMetadata
+		var msgForPrefetch *arbostypes.MessageWithMetadata
+		msgIdxToExecute := execHeadMsgIdx + 1
+
+		var batchSize arbutil.MessageIndex = 100
+		if batchSize > (consensusHeadMsgIdx - execHeadMsgIdx) {
+			batchSize = consensusHeadMsgIdx - execHeadMsgIdx
+		}
+
+		log.Info("ExecuteNextMsg batch size", "batchSize", batchSize, "consensus", consensusHeadMsgIdx, "execHeadMsgIdx", execHeadMsgIdx)
+
+		for i := execHeadMsgIdx + 1; i <= execHeadMsgIdx+batchSize; i++ {
+			msgAndBlockInfo, err := s.getMessageWithMetadataAndBlockInfo(i)
+			if err != nil {
+				log.Error("ExecuteNextMsg failed to readMessage", "err", err, "msgIdxToExecute", i)
+				return false
+			}
+			msgAndBlockInfos = append(msgAndBlockInfos, msgAndBlockInfo)
+			msgsOnly = append(msgsOnly, &msgAndBlockInfo.MessageWithMeta)
+
+			//if msgIdxToExecute+1 <= consensusHeadMsgIdx {
+			//	msg, err := s.GetMessage(msgIdxToExecute + 1)
+			//	if err != nil {
+			//		log.Error("ExecuteNextMsg failed to readMessage", "err", err, "msgIdxToExecute+1", msgIdxToExecute+1)
+			//		return false
+			//	}
+			//	msgForPrefetch = msg
+			//}
+		}
+
+		msgResult, err := s.exec.DigestMessages(msgIdxToExecute, msgsOnly, msgForPrefetch).Await(ctx)
 		if err != nil {
-			log.Error("ExecuteNextMsg failed to readMessage", "err", err, "msgIdxToExecute+1", msgIdxToExecute+1)
+			logger := log.Warn
+			if (prevHeadMsgIdx == nil) || (*prevHeadMsgIdx < consensusHeadMsgIdx) {
+				logger = log.Debug
+			}
+			logger("ExecuteNextMsg failed to send message to execEngine", "err", err, "msgIdxToExecute", msgIdxToExecute)
 			return false
 		}
-		msgForPrefetch = msg
-	}
-	msgResult, err := s.exec.DigestMessage(msgIdxToExecute, &msgAndBlockInfo.MessageWithMeta, msgForPrefetch).Await(ctx)
-	if err != nil {
-		logger := log.Warn
-		if (prevHeadMsgIdx == nil) || (*prevHeadMsgIdx < consensusHeadMsgIdx) {
-			logger = log.Debug
+
+		for r := 0; r < len(msgResult.Results); r++ {
+			s.checkResult(msgIdxToExecute+arbutil.MessageIndex(r), &msgResult.Results[r], msgAndBlockInfos[r])
+
+			batch := s.db.NewBatch()
+			err = s.storeResult(msgIdxToExecute+arbutil.MessageIndex(r), msgResult.Results[r], batch)
+			if err != nil {
+				log.Error("ExecuteNextMsg failed to store result", "err", err)
+				return false
+			}
+			err = batch.Write()
+			if err != nil {
+				log.Error("ExecuteNextMsg failed to store result", "err", err)
+				return false
+			}
+
+			msgWithBlockInfo := arbostypes.MessageWithMetadataAndBlockInfo{
+				MessageWithMeta: msgAndBlockInfos[r].MessageWithMeta,
+				BlockHash:       &msgResult.Results[r].BlockHash,
+				BlockMetadata:   msgAndBlockInfos[r].BlockMetadata,
+			}
+			s.broadcastMessages([]arbostypes.MessageWithMetadataAndBlockInfo{msgWithBlockInfo}, msgIdxToExecute+arbutil.MessageIndex(r))
 		}
-		logger("ExecuteNextMsg failed to send message to execEngine", "err", err, "msgIdxToExecute", msgIdxToExecute)
-		return false
-	}
+		log.Info("ExecuteNextMsg return", "return", execHeadMsgIdx+batchSize <= consensusHeadMsgIdx)
+		return execHeadMsgIdx+batchSize <= consensusHeadMsgIdx
+	} else {
+		msgIdxToExecute := execHeadMsgIdx + 1
 
-	s.checkResult(msgIdxToExecute, msgResult, msgAndBlockInfo)
+		msgAndBlockInfo, err := s.getMessageWithMetadataAndBlockInfo(msgIdxToExecute)
+		if err != nil {
+			log.Error("ExecuteNextMsg failed to readMessage", "err", err, "msgIdxToExecute", msgIdxToExecute)
+			return false
+		}
+		var msgForPrefetch *arbostypes.MessageWithMetadata
+		if msgIdxToExecute+1 <= consensusHeadMsgIdx {
+			msg, err := s.GetMessage(msgIdxToExecute + 1)
+			if err != nil {
+				log.Error("ExecuteNextMsg failed to readMessage", "err", err, "msgIdxToExecute+1", msgIdxToExecute+1)
+				return false
+			}
+			msgForPrefetch = msg
+		}
+		msgResult, err := s.exec.DigestMessage(msgIdxToExecute, &msgAndBlockInfo.MessageWithMeta, msgForPrefetch).Await(ctx)
+		if err != nil {
+			logger := log.Warn
+			if (prevHeadMsgIdx == nil) || (*prevHeadMsgIdx < consensusHeadMsgIdx) {
+				logger = log.Debug
+			}
+			logger("ExecuteNextMsg failed to send message to execEngine", "err", err, "msgIdxToExecute", msgIdxToExecute)
+			return false
+		}
 
-	batch := s.db.NewBatch()
-	err = s.storeResult(msgIdxToExecute, *msgResult, batch)
-	if err != nil {
-		log.Error("ExecuteNextMsg failed to store result", "err", err)
-		return false
-	}
-	err = batch.Write()
-	if err != nil {
-		log.Error("ExecuteNextMsg failed to store result", "err", err)
-		return false
-	}
+		s.checkResult(msgIdxToExecute, msgResult, msgAndBlockInfo)
 
-	msgWithBlockInfo := arbostypes.MessageWithMetadataAndBlockInfo{
-		MessageWithMeta: msgAndBlockInfo.MessageWithMeta,
-		BlockHash:       &msgResult.BlockHash,
-		BlockMetadata:   msgAndBlockInfo.BlockMetadata,
-	}
-	s.broadcastMessages([]arbostypes.MessageWithMetadataAndBlockInfo{msgWithBlockInfo}, msgIdxToExecute)
+		batch := s.db.NewBatch()
+		err = s.storeResult(msgIdxToExecute, *msgResult, batch)
+		if err != nil {
+			log.Error("ExecuteNextMsg failed to store result", "err", err)
+			return false
+		}
+		err = batch.Write()
+		if err != nil {
+			log.Error("ExecuteNextMsg failed to store result", "err", err)
+			return false
+		}
 
-	return msgIdxToExecute+1 <= consensusHeadMsgIdx
+		msgWithBlockInfo := arbostypes.MessageWithMetadataAndBlockInfo{
+			MessageWithMeta: msgAndBlockInfo.MessageWithMeta,
+			BlockHash:       &msgResult.BlockHash,
+			BlockMetadata:   msgAndBlockInfo.BlockMetadata,
+		}
+		s.broadcastMessages([]arbostypes.MessageWithMetadataAndBlockInfo{msgWithBlockInfo}, msgIdxToExecute)
+
+		return msgIdxToExecute+1 <= consensusHeadMsgIdx
+	}
 }
 
 func (s *TransactionStreamer) executeMessages(ctx context.Context, ignored struct{}) time.Duration {

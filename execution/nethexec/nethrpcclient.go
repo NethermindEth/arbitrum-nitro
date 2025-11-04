@@ -33,6 +33,12 @@ type messageParams struct {
 	MessageForPrefetch *arbostypes.MessageWithMetadata `json:"messageForPrefetch,omitempty"`
 }
 
+type bulkMessageParams struct {
+	StartIndex         arbutil.MessageIndex              `json:"startIndex"`
+	Messages           []*arbostypes.MessageWithMetadata `json:"messages"`
+	MessageForPrefetch *arbostypes.MessageWithMetadata   `json:"messageForPrefetch,omitempty"`
+}
+
 type initializeMessageParams struct {
 	InitialL1BaseFee      *big.Int `json:"initialL1BaseFee"`
 	SerializedChainConfig []byte   `json:"serializedChainConfig"`
@@ -133,6 +139,28 @@ func (c *nethRpcClient) DigestMessage(ctx context.Context, index arbutil.Message
 
 	var result execution.MessageResult
 	if err := c.client.CallContext(ctx, &result, "DigestMessage", params); err != nil {
+		log.Error("Failed to call DigestMessage", "error", err)
+		return nil
+	}
+
+	return &result
+}
+
+func (c *nethRpcClient) DigestMessages(ctx context.Context, index arbutil.MessageIndex, msg []*arbostypes.MessageWithMetadata, msgForPrefetch *arbostypes.MessageWithMetadata) *execution.BulkMessageResult {
+	params := bulkMessageParams{
+		StartIndex:         index,
+		Messages:           msg,
+		MessageForPrefetch: msgForPrefetch,
+	}
+
+	//log.Debug("Making JSON-RPC call to DigestMessage",
+	//	"url", c.url,
+	//	"index", index,
+	//	"messageType", msg.Message.Header.Kind,
+	//)
+
+	var result execution.BulkMessageResult
+	if err := c.client.CallContext(ctx, &result, "DigestMessages", params); err != nil {
 		log.Error("Failed to call DigestMessage", "error", err)
 		return nil
 	}

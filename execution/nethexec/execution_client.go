@@ -49,6 +49,19 @@ func (p *nethermindExecutionClient) DigestMessage(index arbutil.MessageIndex, ms
 	return &promise
 }
 
+func (p *nethermindExecutionClient) DigestMessages(index arbutil.MessageIndex, msg []*arbostypes.MessageWithMetadata, msgForPrefetch *arbostypes.MessageWithMetadata) containers.PromiseInterface[*execution.BulkMessageResult] {
+	promise := containers.NewPromise[*execution.BulkMessageResult](nil)
+	go func() {
+		res := p.rpcClient.DigestMessages(context.Background(), index, msg, msgForPrefetch)
+		if res == nil {
+			promise.ProduceError(fmt.Errorf("external DigestMessage returned nil"))
+			return
+		}
+		promise.Produce(res)
+	}()
+	return &promise
+}
+
 func (p *nethermindExecutionClient) SetFinalityData(ctx context.Context, safeFinalityData *arbutil.FinalityData, finalizedFinalityData *arbutil.FinalityData, validatedFinalityData *arbutil.FinalityData) containers.PromiseInterface[struct{}] {
 	promise := containers.NewPromise[struct{}](nil)
 	go func() {
