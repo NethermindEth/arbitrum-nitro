@@ -7,7 +7,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/log"
 
-	testflag "github.com/offchainlabs/nitro/util/testhelpers/flag"
+	"github.com/offchainlabs/nitro/util/testhelpers/flag"
 )
 
 const MemoryDB = "in-memory"

@@ -100,6 +100,10 @@ func (s *SyncMonitor) GetMaxMessageCount() (arbutil.MessageIndex, error) {
 	return s.maxMessageCount()
 }
 
+func (s *SyncMonitor) GetMaxMessageCount() (arbutil.MessageIndex, error) {
+	return s.maxMessageCount()
+}
+
 func (s *SyncMonitor) maxMessageCount() (arbutil.MessageIndex, error) {
 	msgCount, err := s.txStreamer.GetMessageCount()
 	if err != nil {
