@@ -6,11 +6,14 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}-${{ github.ref }}
   cancel-in-progress: true
 
-on:
-  workflow_dispatch:
-  merge_group:
-  pull_request:
-    types: [opened, synchronize, reopened]
+# NOTE: Automatic workflow runs disabled - fork version doesn't support these workflows
+# To re-enable, uncomment the triggers below
+# on:
+#   workflow_dispatch:
+#   merge_group:
+#   pull_request:
+#     types: [opened, synchronize, reopened]
+on: []
 
 jobs:
   docker:

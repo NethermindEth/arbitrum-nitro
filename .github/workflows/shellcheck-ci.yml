@@ -2,12 +2,15 @@
 name: ShellCheck CI
 run-name: ShellCheck CI triggered from @${{ github.actor }} of ${{ github.head_ref }}
 
-on:
-  workflow_dispatch:
-  merge_group:
-  pull_request:
-  push:
-    branches: [master, main]
+# NOTE: Automatic workflow runs disabled - fork version doesn't support these workflows
+# To re-enable, uncomment the triggers below
+# on:
+#   workflow_dispatch:
+#   merge_group:
+#   pull_request:
+#   push:
+#     branches: [master, main]
+on: []
 
 jobs:
   shellcheck:
