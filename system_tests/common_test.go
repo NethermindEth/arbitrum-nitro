@@ -204,6 +204,22 @@ func (tc *TestClient) EnsureTxSucceededWithTimeout(transaction *types.Transactio
 	return EnsureTxSucceededWithTimeout(tc.ctx, tc.Client, transaction, timeout)
 }
 
+func (tc *TestClient) BalanceDifferenceAtBlock(address common.Address, blockNum *big.Int) (*big.Int, error) {
+	if blockNum.Cmp(common.Big1) < 0 {
+		return nil, fmt.Errorf("blocknum must be > 1")
+	}
+	prevBlock := arbmath.BigSub(blockNum, common.Big1)
+	prevBalance, err := tc.Client.BalanceAt(tc.ctx, address, prevBlock)
+	if err != nil {
+		return nil, err
+	}
+	newBalance, err := tc.Client.BalanceAt(tc.ctx, address, blockNum)
+	if err != nil {
+		return nil, err
+	}
+	return arbmath.BigSub(newBalance, prevBalance), nil
+}
+
 // GetCodeHash retrieves the code hash for a contract address via RPC.
 // This works with any execution client (geth or external like Nethermind).
 func GetCodeHash(t *testing.T, ctx context.Context, client *ethclient.Client, address common.Address) common.Hash {
@@ -227,22 +243,6 @@ func CheckWasmStore(t *testing.T, testClient *TestClient, expectedTargets []rawd
 	}
 	wasmDb := testClient.ExecNode.Backend.ArbInterface().BlockChain().StateCache().WasmStore()
 	checkWasmStoreContent(t, wasmDb, expectedTargets, numModules)
-}
-
-func (tc *TestClient) BalanceDifferenceAtBlock(address common.Address, blockNum *big.Int) (*big.Int, error) {
-	if blockNum.Cmp(common.Big1) < 0 {
-		return nil, fmt.Errorf("blocknum must be > 1")
-	}
-	prevBlock := arbmath.BigSub(blockNum, common.Big1)
-	prevBalance, err := tc.Client.BalanceAt(tc.ctx, address, prevBlock)
-	if err != nil {
-		return nil, err
-	}
-	newBalance, err := tc.Client.BalanceAt(tc.ctx, address, blockNum)
-	if err != nil {
-		return nil, err
-	}
-	return arbmath.BigSub(newBalance, prevBalance), nil
 }
 
 var DefaultTestForwarderConfig = gethexec.ForwarderConfig{
