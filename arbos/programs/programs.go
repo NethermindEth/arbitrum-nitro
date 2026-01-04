@@ -638,7 +638,7 @@ func (p Programs) getProgram(codeHash common.Hash, time uint64) (Program, error)
 	program.ageSeconds = hoursToAge(time, program.activatedAt)
 
 	if types.IsTargetBlock() {
-		types.OLog2(fmt.Sprintf("stylus getProgram codeHash=%s version=%d initCost=%d cachedCost=%d footprint=%d activatedAtHours=%d asmEstimateKb=%d ageSeconds=%d cached=%t", codeHash.String(), program.version, program.initCost, program.cachedCost, program.footprint, program.activatedAt, program.asmEstimateKb, program.ageSeconds, program.cached))
+		types.OLog2(fmt.Sprintf("stylus getProgram codeHash=%s time=%d version=%d initCost=%d cachedCost=%d footprint=%d activatedAtHours=%d asmEstimateKb=%d ageSeconds=%d cached=%t", codeHash.String(), time, program.version, program.initCost, program.cachedCost, program.footprint, program.activatedAt, program.asmEstimateKb, program.ageSeconds, program.cached))
 	}
 
 	return program, err
