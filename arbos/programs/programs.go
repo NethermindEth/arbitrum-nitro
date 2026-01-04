@@ -660,6 +660,10 @@ func (p Programs) getActiveProgram(codeHash common.Hash, time uint64, params *St
 		return program, ProgramNeedsUpgradeError(program.version, stylusVersion)
 	}
 
+	if types.IsTargetBlock() {
+		types.OLog2(fmt.Sprintf("stylus getActiveProgram ageSeconds=%d expiryDays=%d daysToSeconds=%d", program.ageSeconds, params.ExpiryDays, arbmath.DaysToSeconds(params.ExpiryDays)))
+	}
+
 	// ensure the program hasn't expired
 	if program.ageSeconds > arbmath.DaysToSeconds(params.ExpiryDays) {
 		return program, ProgramExpiredError(program.ageSeconds)
