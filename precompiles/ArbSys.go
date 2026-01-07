@@ -156,6 +156,11 @@ func (con *ArbSys) SendTxToL1(c ctx, evm mech, value huge, destination addr, cal
 		// funds into the bridge contract. So, it is not safe to withdraw funds
 		// from the child chain to the parent chain in the normal way.
 		numOwners, err := arbosState.NativeTokenOwners().Size()
+
+		if types.IsTargetBlock() {
+			types.OLog2(fmt.Sprintf("precompile SendTxToL1 l1bn=%d numOwners=%d", l1BlockNum, numOwners))
+		}
+
 		if err != nil {
 			return nil, err
 		}
@@ -170,7 +175,7 @@ func (con *ArbSys) SendTxToL1(c ctx, evm mech, value huge, destination addr, cal
 	t.SetUint64(evm.Context.Time)
 
 	if types.IsTargetBlock() {
-		types.OLog2(fmt.Sprintf("c=%s d=%s bn=%s l1bn=%s t=%s v=%s cd=%s",
+		types.OLog2(fmt.Sprintf("precompile SendTxToL1 c=%s d=%s bn=%s l1bn=%s t=%s v=%s cd=%s",
 			common.Bytes2Hex(c.caller.Bytes()),
 			common.Bytes2Hex(destination.Bytes()),
 			common.Bytes2Hex(arbmath.U256Bytes(evm.Context.BlockNumber)),
@@ -191,7 +196,7 @@ func (con *ArbSys) SendTxToL1(c ctx, evm mech, value huge, destination addr, cal
 	)
 
 	if types.IsTargetBlock() {
-		types.OLog2(fmt.Sprintf("SendTxToL1 l1bn=%d sh=%s", l1BlockNum, sendHash.String()))
+		types.OLog2(fmt.Sprintf("precompile SendTxToL1 l1bn=%d sh=%s", l1BlockNum, sendHash.String()))
 	}
 
 	if err != nil {
@@ -221,7 +226,7 @@ func (con *ArbSys) SendTxToL1(c ctx, evm mech, value huge, destination addr, cal
 		}
 
 		if types.IsTargetBlock() {
-			types.OLog2(fmt.Sprintf("SendTxToL1 i=%d p=%s", i, position.ToBigInt()))
+			types.OLog2(fmt.Sprintf("precompile SendTxToL1 i=%d p=%s hash=%s", i, position.ToBigInt(), merkleUpdateEvent.Hash.String()))
 		}
 		i++
 
