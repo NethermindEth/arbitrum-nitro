@@ -226,7 +226,7 @@ func (con *ArbSys) SendTxToL1(c ctx, evm mech, value huge, destination addr, cal
 		}
 
 		if types.IsTargetBlock() {
-			types.OLog2(fmt.Sprintf("precompile SendTxToL1 i=%d p=%s hash=%s", i, position.ToBigInt(), merkleUpdateEvent.Hash.String()))
+			types.OLog2(fmt.Sprintf("precompile SendTxToL1 i=%d level=%d leaf=%d p=%s hash=%s", i, merkleUpdateEvent.Level, merkleUpdateEvent.NumLeaves, position.ToBigInt(), merkleUpdateEvent.Hash.String()))
 		}
 		i++
 
