@@ -363,7 +363,7 @@ func (p *TxProcessor) StartTxHook() (endTxNow bool, multiGasUsed multigas.MultiG
 				infraCost = takeFunds(networkCost, infraCost)
 
 				if types.IsTargetBlock() {
-					types.OLog2(fmt.Sprintf("transaction infraFee=%s infraCost=%s effectiveBaseFee=%s", infraFee.String(), infraCost.String(), effectiveBaseFee.String()))
+					types.OLog2(fmt.Sprintf("transaction infraFee=%s infraCost=%s effectiveBaseFee=%s userGas=%d", infraFee.String(), infraCost.String(), effectiveBaseFee.String(), usergas))
 				}
 
 				if err := transfer(&tx.From, &infraFeeAccount, infraCost, tracing.BalanceIncreaseInfraFee); err != nil {
