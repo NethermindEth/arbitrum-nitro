@@ -361,6 +361,11 @@ func (p *TxProcessor) StartTxHook() (endTxNow bool, multiGasUsed multigas.MultiG
 				infraFee := arbmath.BigMin(minBaseFee, effectiveBaseFee)
 				infraCost := arbmath.BigMulByUint(infraFee, usergas)
 				infraCost = takeFunds(networkCost, infraCost)
+
+				if types.IsTargetBlock() {
+					types.OLog2(fmt.Sprintf("transaction infraFee=%s infraCost=%s effectiveBaseFee=%s", infraFee.String(), infraCost.String(), effectiveBaseFee.String()))
+				}
+
 				if err := transfer(&tx.From, &infraFeeAccount, infraCost, tracing.BalanceIncreaseInfraFee); err != nil {
 					log.Error("failed to transfer gas cost to infrastructure fee account", "err", err)
 					return true, multigas.ZeroGas(), filteredErr, ticketId.Bytes()
