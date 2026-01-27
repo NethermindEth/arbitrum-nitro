@@ -9,7 +9,6 @@ import (
 	"regexp"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -441,8 +440,6 @@ func checkPercentDiff(t *testing.T, a, b float64, maxAllowedDifference float64) 
 		Fatal(t, fmt.Sprintf("gas usages are too different; got %v, max allowed is %v", percentageDifference, maxAllowedDifference))
 	}
 }
-
-// Cross-client test implementations
 
 func testProgramSimpleCostWithReplica(t *testing.T, executionClientMode ExecutionClientMode) {
 	builder := setupGasCostTest(t)
