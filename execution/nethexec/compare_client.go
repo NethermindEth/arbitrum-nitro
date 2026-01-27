@@ -1,6 +1,7 @@
 package nethexec
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math/big"
@@ -135,6 +136,58 @@ func compare[T any](op string, intRes T, intErr error, extRes T, extErr error) e
 		if !cmp.Equal(intRes, extRes, opts...) {
 			diff := cmp.Diff(intRes, extRes, opts...)
 			// Log the detailed diff using fmt.Printf to avoid escaping
+			fmt.Printf("ERROR: Execution mismatch detected in operation: %s\n", op)
+			fmt.Printf("Diff details:\n%s\n", diff)
+			return fmt.Errorf("execution mismatch in %s", op)
+		}
+	}
+	return nil
+}
+
+func compareRecordResult(op string, intRes *execution.RecordResult, intErr error, extRes *execution.RecordResult, extErr error) error {
+	switch {
+	case intErr != nil && extErr != nil:
+		return fmt.Errorf("both operations failed: internal=%v external=%v", intErr, extErr)
+	case intErr != nil && extErr == nil:
+		return fmt.Errorf("internal operation failed: %v", intErr)
+	case intErr == nil && extErr != nil:
+		return fmt.Errorf("external operation failed: %v", extErr)
+	default:
+		// For RecordResult.Preimages: allow external to be a strict superset of internal.
+		// Fail only if internal has a preimage missing/different in external.
+		if intRes != nil {
+			for k, v := range intRes.Preimages {
+				if extRes == nil || extRes.Preimages == nil {
+					return fmt.Errorf("execution mismatch in %s: external missing preimages map (missing hash %s)", op, k.Hex())
+				}
+				extV, ok := extRes.Preimages[k]
+				if !ok {
+					return fmt.Errorf("execution mismatch in %s: external missing preimage for hash %s", op, k.Hex())
+				}
+				if !bytes.Equal(v, extV) {
+					return fmt.Errorf("execution mismatch in %s: preimage differs for hash %s", op, k.Hex())
+				}
+			}
+		}
+
+		// Compare all other fields as normal (ignore Preimages contents after subset check).
+		var intCopy, extCopy *execution.RecordResult
+		if intRes != nil {
+			tmp := *intRes
+			tmp.Preimages = nil
+			intCopy = &tmp
+		}
+		if extRes != nil {
+			tmp := *extRes
+			tmp.Preimages = nil
+			extCopy = &tmp
+		}
+
+		if !cmp.Equal(intCopy, extCopy) {
+			opts := cmp.Options{
+				cmp.Transformer("HashHex", func(h common.Hash) string { return h.Hex() }),
+			}
+			diff := cmp.Diff(intCopy, extCopy, opts)
 			fmt.Printf("ERROR: Execution mismatch detected in operation: %s\n", op)
 			fmt.Printf("Diff details:\n%s\n", diff)
 			return fmt.Errorf("execution mismatch in %s", op)
@@ -372,9 +425,38 @@ func (w *compareExecutionClient) FullSyncProgressMap(ctx context.Context) map[st
 func (w *compareExecutionClient) RecordBlockCreation(ctx context.Context, index arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata, wasmTargets []rawdb.WasmTarget) (*execution.RecordResult, error) {
 	start := time.Now()
 	log.Info("CompareExecutionClient: RecordBlockCreation", "index", index)
-	result, err := w.gethExecutionClient.RecordBlockCreation(ctx, index, msg, wasmTargets)
-	log.Info("CompareExecutionClient: RecordBlockCreation completed", "index", index, "err", err, "elapsed", time.Since(start))
-	return result, err
+	internalRes, internalErr := w.gethExecutionClient.RecordBlockCreation(ctx, index, msg, wasmTargets)
+	// externalRes := &execution.RecordResult{}
+	// externalErr := error(nil)
+
+	// if index == 350_159 {
+	externalRes, externalErr := w.nethermindExecutionClient.RecordBlockCreation(ctx, index, msg, wasmTargets)
+
+	if err := compareRecordResult("RecordBlockCreation", internalRes, internalErr, externalRes, externalErr); err != nil {
+		// Send to fatal error channel for graceful shutdown
+		select {
+		case w.fatalErrChan <- fmt.Errorf("compareExecutionClient RecordBlockCreation: %s", err.Error()):
+			// Successfully sent - this is a fatal operation
+			log.Info("CompareExecutionClient: RecordBlockCreation completed with error", "index", index, "err", err, "elapsed", time.Since(start))
+			return internalRes, err
+		default:
+			// Could not send (nil channel or full) - treat as non-fatal
+			log.Error("Non-fatal comparison error", "operation", "RecordBlockCreation", "err", err)
+		}
+	} else {
+		log.Info("CompareExecutionClient: RecordBlockCreation completed without error", "index", index, "elapsed", time.Since(start))
+	}
+	// }
+
+	log.Info(
+		"CompareExecutionClient: RecordBlockCreation completed",
+		"index", index,
+		"internalErr", internalErr,
+		"externalErr", externalErr,
+		"elapsed", time.Since(start),
+	)
+	// return internalRes, internalErr
+	return externalRes, externalErr
 }
 
 func (w *compareExecutionClient) MarkValid(index arbutil.MessageIndex, resultHash common.Hash) {

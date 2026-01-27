@@ -2,10 +2,14 @@ package gethexec
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/spf13/pflag"
 
@@ -106,6 +110,10 @@ func (r *BlockRecorder) RecordBlockCreation(
 	wasmTargets []rawdb.WasmTarget,
 ) (*execution.RecordResult, error) {
 	blockNum := r.execEngine.MessageIndexToBlockNumber(pos)
+	// println("--- In RecordBlockCreation at blockNum", blockNum)
+	if blockNum == 350_159+22_207_817 {
+		println("--- In RecordBlockCreation at index 350_159 ---")
+	}
 
 	var prevHeader *types.Header
 	if pos != 0 {
@@ -170,8 +178,14 @@ func (r *BlockRecorder) RecordBlockCreation(
 			return nil, err
 		}
 		blockHash = block.Hash()
+		// println("-------------------------")
+		// println("--- block number %v hash %v txs %v", block.Number().String(), block.Hash().Hex(), len(block.Transactions()))
+		// for _, tx := range block.Transactions() {
+		// 	println("--- tx %v info", tx.Hash().Hex())
+		// }
 	}
 
+	// preimages, err := r.recordingDatabase.PreimagesFromRecording(uint64(pos), chaincontext, recordingKV)
 	preimages, err := r.recordingDatabase.PreimagesFromRecording(chaincontext, recordingKV)
 	if err != nil {
 		return nil, err
@@ -187,12 +201,76 @@ func (r *BlockRecorder) RecordBlockCreation(
 	r.updateLastHdr(prevHeader)
 	r.updateValidCandidateHdr(prevHeader)
 
+	dumpDir := os.Getenv("NITRO_RECORD_DUMP_DIR")
+	if dumpDir != "" {
+		rr := &execution.RecordResult{
+			Index:     pos,
+			BlockHash: blockHash,
+			Preimages: preimages,
+			UserWasms: recordingdb.UserWasms(),
+		}
+		dumpRecordResultToFile(dumpDir, blockNum, rr)
+		return rr, err
+	}
+
 	return &execution.RecordResult{
 		Index:     pos,
 		BlockHash: blockHash,
 		Preimages: preimages,
 		UserWasms: recordingdb.UserWasms(),
 	}, err
+}
+
+type recordResultDump struct {
+	Index     arbutil.MessageIndex         `json:"index"`
+	BlockNum  uint64                       `json:"blockNum"`
+	BlockHash common.Hash                  `json:"blockHash"`
+	Preimages map[string]string            `json:"preimages"`
+	UserWasms map[string]map[string]string `json:"userWasms"`
+}
+
+func dumpRecordResultToFile(dir string, blockNum uint64, rr *execution.RecordResult) {
+	err := os.MkdirAll(dir, 0o755)
+	if err != nil {
+		log.Warn("failed to create record dump dir", "dir", dir, "err", err)
+		return
+	}
+
+	preimages := make(map[string]string, len(rr.Preimages))
+	for k, v := range rr.Preimages {
+		preimages[k.Hex()] = common.Bytes2Hex(v)
+	}
+
+	userWasms := make(map[string]map[string]string, len(rr.UserWasms))
+	for moduleHash, activated := range rr.UserWasms {
+		perTarget := make(map[string]string, len(activated))
+		for target, b := range activated {
+			perTarget[string(target)] = common.Bytes2Hex(b)
+		}
+		userWasms[moduleHash.Hex()] = perTarget
+	}
+
+	dump := recordResultDump{
+		Index:     rr.Index,
+		BlockNum:  blockNum,
+		BlockHash: rr.BlockHash,
+		Preimages: preimages,
+		UserWasms: userWasms,
+	}
+
+	data, err := json.MarshalIndent(dump, "", "  ")
+	if err != nil {
+		log.Warn("failed to marshal record result dump", "err", err)
+		return
+	}
+
+	fileName := fmt.Sprintf("record_block_creation_msg_%d_block_%d_%d.json", rr.Index, blockNum, time.Now().UnixNano())
+	path := filepath.Join(dir, fileName)
+	err = os.WriteFile(path, data, 0o644)
+	if err != nil {
+		log.Warn("failed to write record result dump", "path", path, "err", err)
+		return
+	}
 }
 
 func (r *BlockRecorder) updateLastHdr(hdr *types.Header) {

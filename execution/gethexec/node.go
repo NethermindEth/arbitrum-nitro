@@ -545,6 +545,11 @@ func (n *ExecutionNode) RecordBlockCreation(
 	msg *arbostypes.MessageWithMetadata,
 	wasmTargets []rawdb.WasmTarget,
 ) (*execution.RecordResult, error) {
+	blockNum, err := n.MessageIndexToBlockNumber(pos).Await(ctx)
+	if err != nil {
+		return nil, err
+	}
+	println("--- RecordBlockCreation for block: ", blockNum, " at index ", pos)
 	return n.Recorder.RecordBlockCreation(ctx, pos, msg, wasmTargets)
 }
 func (n *ExecutionNode) MarkValid(pos arbutil.MessageIndex, resultHash common.Hash) {

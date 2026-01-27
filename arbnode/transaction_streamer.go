@@ -1275,7 +1275,24 @@ func (s *TransactionStreamer) ResultAtMessageIndex(msgIdx arbutil.MessageIndex) 
 	log.Info(FailedToGetMsgResultFromDB, "msgIdx", msgIdx)
 
 	if !s.Started() {
-		return nil, fmt.Errorf("transaction streamer not started")
+		println("--- TransactionStreamer not started yet ---")
+		// ResultAtMessageIndex can be called during node construction (e.g. block validator init)
+		// before the transaction streamer has been started.
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		msgResult, err := s.exec.ResultAtMessageIndex(msgIdx).Await(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if msgResult == nil {
+			return nil, fmt.Errorf("message result is nil")
+		}
+		// Best-effort store result so later reads don't need to query execution.
+		batch := s.db.NewBatch()
+		if storeErr := s.storeResult(msgIdx, *msgResult, batch); storeErr == nil {
+			_ = batch.Write()
+		}
+		return msgResult, nil
 	}
 
 	ctx := s.GetContext()
