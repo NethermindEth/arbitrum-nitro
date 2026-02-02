@@ -94,7 +94,7 @@ func NewNethRpcClient(url string, wsUrl string) (*nethRpcClient, error) {
 	}
 
 	httpClient := rpc.WithHTTPClient(&http.Client{
-		Timeout: 30 * time.Second,
+		Timeout: 120 * time.Second,
 	})
 
 	// WebSocket is optional - only needed for subscriptions
