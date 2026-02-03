@@ -16,6 +16,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -752,6 +753,24 @@ func mainImpl() int {
 		} else {
 			log.Warn("GraphQL is not supported with external execution client mode")
 		}
+	}
+
+	if rollbackToBlockNumber, err := strconv.ParseInt(os.Getenv("PR_ROLLBACK_TO"), 10, 64); err == nil {
+		currentBlockHeader := l2BlockChain.CurrentBlock()
+		currentBlockHeaderNumber := int64(0)
+		if currentBlockHeader != nil {
+			currentBlockHeaderNumber = currentBlockHeader.Number.Int64()
+		}
+
+		log.Warn("Prepare to rollback chain head", "currentBlockHeaderNumber", currentBlockHeaderNumber, "rollbackToBlockNumber", rollbackToBlockNumber)
+
+		if rollbackToBlockNumber > 0 && currentBlockHeader != nil && rollbackToBlockNumber < currentBlockHeaderNumber {
+			log.Warn("Rolling back chain head", "blockNumber", rollbackToBlockNumber, "currentBlockHeader", currentBlockHeaderNumber)
+
+			l2BlockChain.SetHead(uint64(rollbackToBlockNumber))
+		}
+	} else {
+		log.Warn("Unable to parse PR_ROLLBACK_TO", "err", err)
 	}
 
 	if valNode != nil {

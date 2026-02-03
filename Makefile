@@ -332,6 +332,69 @@ run-follower-compare-local:
 		--http.port 7547 \
 		--ws.port 7548
 
+# Can add the following flag for recording nitro's RecordResult
+# NITRO_RECORD_DUMP_DIR=../debug-dumps \
+
+.PHONY: run-follower-compare-local-with-validation
+run-follower-compare-local-with-validation:
+	@echo "Removing previous data..."
+	rm -rf /tmp/sequencer_follower
+	@echo "Starting Nitro sequencer follower..."
+	CGO_LDFLAGS=-Wl,-no_warn_duplicate_libraries \
+	PR_IGNORE_CALLSTACK=false \
+	PR_OVERRIDE_FORWARDER_URL=ws://localhost:8548 \
+	target/bin/nitro \
+		--persistent.global-config /tmp/sequencer_follower \
+		--ipc.path /tmp/dev-test/geth.ipc \
+		--conf.file ../arbitrum-nitro-testnode/data/config/sequencer_follower_config_native.json \
+		--node.seq-coordinator.my-url ws://follower:8548 \
+		--execution.execution-mode compare \
+		--execution.nethermind-url http://localhost:20545 \
+		--execution.nethermind-ws-url ws://localhost:28551 \
+		--http.port 7547 \
+		--ws.port 7548 \
+		--node.block-validator.enable=true \
+		--node.block-validator.validation-server.url=self-auth \
+		--node.block-validator.current-module-root latest \
+		--validation.wasm.enable-wasmroots-check=false \
+		--validation.wasm.root-path ./target/machines \
+		--validation.jit.jit-path ./arbitrator/target/release/jit \
+		--validation.use-jit=true
+
+.PHONY: run-follower-compare-mainnet-with-validation
+run-follower-compare-mainnet-with-validation:
+	@echo "Starting Nitro sequencer follower (Arbitrum One with Nethermind)..."
+	CGO_LDFLAGS=-Wl,-no_warn_duplicate_libraries \
+	PR_IGNORE_CALLSTACK=false \
+	PR_OVERRIDE_FORWARDER_URL=ws://localhost:8548 \
+	target/bin/nitro \
+			--persistent.global-config /sync/mainnet/nitro_data \
+			--parent-chain.connection.url=http://38.154.254.162:8545 \
+			--parent-chain.blob-client.beacon-url=http://38.154.254.162:4000 \
+			--execution.execution-mode compare \
+			--execution.nethermind-url http://localhost:20545 \
+			--execution.nethermind-ws-url ws://localhost:28551 \
+			--chain.name=arb1 \
+			--init.latest=genesis \
+			--execution.forwarding-target null \
+			--http.addr=0.0.0.0 \
+			--http.port=8747 \
+			--ws.port 7548 \
+			--node.staker.enable=false \
+			--node.block-validator.enable=true \
+			--node.block-validator.validation-server.url=self-auth \
+			--node.block-validator.current-module-root latest \
+			--validation.wasm.enable-wasmroots-check=false \
+			--validation.wasm.root-path ./target/machines \
+			--validation.jit.jit-path ./arbitrator/target/release/jit \
+			--validation.use-jit=true
+# 			--conf.dump \
+# 			--node.staker.start-validation-from-staked=false \
+# 			--node.bold.start-validation-from-staked=false \
+# 			--node.block-validator.dangerous.reset-block-validation=true \
+# 			--log-level TRACE \
+# 			--validation.wasm.allowed-wasm-module-roots=0x184884e1eb9fefdc158f6c8ac912bb183bf3cf83f0090317e0bc4ac5860baa39 \
+
 .PHONY: clean-run-follower-compare-local
 clean-run-follower-compare-local: clean-follower run-follower-compare-local
 
@@ -357,6 +420,31 @@ run-follower-compare-sepolia:
 		--execution.enable-prefetch-block=false \
 		--http.addr=0.0.0.0 \
 		--http.port=8747
+
+.PHONY: run-follower-compare-sepolia-with-validation
+run-follower-compare-sepolia-with-validation:
+	@echo "Starting Nitro sequencer follower (Sepolia with Nethermind)..."
+	CGO_LDFLAGS=-Wl,-no_warn_duplicate_libraries \
+	PR_IGNORE_CALLSTACK=false \
+	target/bin/nitro \
+		--persistent.global-config /sync/sepolia/nitro_data \
+		--parent-chain.connection.url=http://209.127.228.66/rpc/6ekWpL9BXR0aLXrd \
+        --parent-chain.blob-client.beacon-url=http://209.127.228.66/consensus/6ekWpL9BXR0aLXrd \
+		--execution.execution-mode compare \
+		--execution.nethermind-url http://localhost:20545 \
+		--execution.nethermind-ws-url ws://localhost:28551 \
+		--chain.id=421614 \
+		--execution.forwarding-target null \
+		--http.addr=0.0.0.0 \
+		--http.port=8747 \
+		--node.staker.enable=false \
+		--node.block-validator.enable=true \
+		--node.block-validator.validation-server.url=self-auth \
+		--node.block-validator.current-module-root latest \
+		--validation.wasm.enable-wasmroots-check=false \
+		--validation.wasm.root-path ./target/machines \
+		--validation.jit.jit-path ./arbitrator/target/release/jit \
+		--validation.use-jit=true
 
 .PHONY: clean-run-follower-compare-sepolia
 clean-run-follower-compare-sepolia: clean-follower run-follower-compare-sepolia

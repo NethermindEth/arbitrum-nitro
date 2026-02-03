@@ -9,6 +9,8 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/eth/tracers/native"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rpc"
@@ -60,6 +62,19 @@ type reorgParams struct {
 type seqDelayedParams struct {
 	DelayedSeqNum uint64                        `json:"delayedSeqNum"`
 	Message       *arbostypes.L1IncomingMessage `json:"message"`
+}
+
+type recordBlockCreationParams struct {
+	Index       arbutil.MessageIndex            `json:"index"`
+	Message     *arbostypes.MessageWithMetadata `json:"message"`
+	WasmTargets []rawdb.WasmTarget              `json:"wasmTargets"`
+}
+
+type recordBlockCreationResult struct {
+	Index     hexutil.Uint64                           `json:"index"`
+	BlockHash common.Hash                              `json:"blockHash"`
+	Preimages map[common.Hash]hexutil.Bytes            `json:"preimages"`
+	UserWasms map[common.Hash]map[string]hexutil.Bytes `json:"userWasms,omitempty"`
 }
 
 type InitMessageDigester interface {
@@ -394,4 +409,34 @@ func (c *nethRpcClient) DebugTraceTransactionByOpcode(ctx context.Context, txHas
 		return native.TxGasDimensionByOpcodeExecutionResult{}, fmt.Errorf("failed to call debug_traceTransaction: %w", err)
 	}
 	return result, nil
+}
+
+func (c *nethRpcClient) RecordBlockCreation(ctx context.Context, index arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata, wasmTargets []rawdb.WasmTarget) (*execution.RecordResult, error) {
+	log.Info("Making JSON-RPC call to RecordBlockCreation", "url", c.url, "index", index)
+
+	params := recordBlockCreationParams{Index: index, Message: msg, WasmTargets: wasmTargets}
+
+	var wire recordBlockCreationResult
+	if err := c.client.CallContext(ctx, &wire, "RecordBlockCreation", params); err != nil {
+		log.Error("Failed to call RecordBlockCreation", "error", err)
+		return nil, fmt.Errorf("failed to call RecordBlockCreation: %w", err)
+	}
+
+	result := execution.RecordResult{
+		Index:     arbutil.MessageIndex(uint64(wire.Index)),
+		BlockHash: wire.BlockHash,
+		Preimages: make(map[common.Hash][]byte, len(wire.Preimages)),
+		UserWasms: make(state.UserWasms, len(wire.UserWasms)),
+	}
+	for k, v := range wire.Preimages {
+		result.Preimages[k] = []byte(v)
+	}
+	for hash, activatedWasm := range wire.UserWasms {
+		result.UserWasms[hash] = make(state.ActivatedWasm, len(activatedWasm))
+		for target, asm := range activatedWasm {
+			result.UserWasms[hash][rawdb.WasmTarget(target)] = asm
+		}
+	}
+
+	return &result, nil
 }

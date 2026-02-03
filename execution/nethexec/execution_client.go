@@ -239,7 +239,7 @@ func (p *nethermindExecutionClient) FullSyncProgressMap(ctx context.Context) map
 }
 
 func (p *nethermindExecutionClient) RecordBlockCreation(ctx context.Context, index arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata, wasmTargets []rawdb.WasmTarget) (*execution.RecordResult, error) {
-	return nil, fmt.Errorf("RecordBlockCreation not implemented")
+	return p.rpcClient.RecordBlockCreation(context.Background(), index, msg, wasmTargets)
 }
 
 func (p *nethermindExecutionClient) MarkValid(index arbutil.MessageIndex, resultHash common.Hash) {
