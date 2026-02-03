@@ -1,0 +1,200 @@
+package comparisonrpcclient
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/node"
+
+	"github.com/offchainlabs/nitro/arbos/arbostypes"
+	"github.com/offchainlabs/nitro/arbutil"
+	"github.com/offchainlabs/nitro/execution"
+	executionrpcclient "github.com/offchainlabs/nitro/execution/rpcclient"
+	"github.com/offchainlabs/nitro/util/containers"
+	"github.com/offchainlabs/nitro/util/rpcclient"
+	"github.com/offchainlabs/nitro/util/stopwaiter"
+)
+
+var ErrMismatch = errors.New("execution client comparison mismatch")
+
+// ComparisonClient wraps primary and secondary execution clients for comparison
+type ComparisonClient struct {
+	stopwaiter.StopWaiter
+	primary    *executionrpcclient.Client
+	secondary  *executionrpcclient.Client
+	comparator *Comparator
+}
+
+func NewComparisonClient(
+	primaryConfig rpcclient.ClientConfigFetcher,
+	secondaryConfig rpcclient.ClientConfigFetcher,
+	stack *node.Node,
+	fatalErrChan chan<- error,
+) *ComparisonClient {
+	return &ComparisonClient{
+		primary:    executionrpcclient.NewClient(primaryConfig, stack),
+		secondary:  executionrpcclient.NewClient(secondaryConfig, nil),
+		comparator: NewComparator(fatalErrChan),
+	}
+}
+
+func (c *ComparisonClient) Start(ctx context.Context) error {
+	c.StopWaiter.Start(ctx, c)
+	if err := c.primary.Start(ctx); err != nil {
+		return fmt.Errorf("failed to start primary execution client: %w", err)
+	}
+	if err := c.secondary.Start(ctx); err != nil {
+		return fmt.Errorf("failed to start secondary execution client: %w", err)
+	}
+	log.Info("Comparison execution client started", "primary", "connected", "secondary", "connected")
+	return nil
+}
+
+func (c *ComparisonClient) StopAndWait() {
+	c.primary.StopAndWait()
+	c.secondary.StopAndWait()
+	c.StopWaiter.StopAndWait()
+}
+
+func (c *ComparisonClient) DigestMessage(
+	msgIdx arbutil.MessageIndex,
+	msg *arbostypes.MessageWithMetadata,
+	msgForPrefetch *arbostypes.MessageWithMetadata,
+) containers.PromiseInterface[*execution.MessageResult] {
+	return c.comparator.CompareMessageResult(
+		c.GetContext(),
+		"DigestMessage",
+		msgIdx,
+		c.primary.DigestMessage(msgIdx, msg, msgForPrefetch),
+		c.secondary.DigestMessage(msgIdx, msg, msgForPrefetch),
+	)
+}
+
+func (c *ComparisonClient) Reorg(
+	msgIdxOfFirstMsgToAdd arbutil.MessageIndex,
+	newMessages []arbostypes.MessageWithMetadataAndBlockInfo,
+	oldMessages []*arbostypes.MessageWithMetadata,
+) containers.PromiseInterface[[]*execution.MessageResult] {
+	return c.comparator.CompareMessageResults(
+		c.GetContext(),
+		"Reorg",
+		msgIdxOfFirstMsgToAdd,
+		c.primary.Reorg(msgIdxOfFirstMsgToAdd, newMessages, oldMessages),
+		c.secondary.Reorg(msgIdxOfFirstMsgToAdd, newMessages, oldMessages),
+	)
+}
+
+func (c *ComparisonClient) HeadMessageIndex() containers.PromiseInterface[arbutil.MessageIndex] {
+	return c.comparator.CompareMessageIndex(
+		c.GetContext(),
+		"HeadMessageIndex",
+		c.primary.HeadMessageIndex(),
+		c.secondary.HeadMessageIndex(),
+	)
+}
+
+func (c *ComparisonClient) ResultAtMessageIndex(msgIdx arbutil.MessageIndex) containers.PromiseInterface[*execution.MessageResult] {
+	return c.comparator.CompareMessageResult(
+		c.GetContext(),
+		"ResultAtMessageIndex",
+		msgIdx,
+		c.primary.ResultAtMessageIndex(msgIdx),
+		c.secondary.ResultAtMessageIndex(msgIdx),
+	)
+}
+
+func (c *ComparisonClient) SetFinalityData(
+	safeFinalityData *arbutil.FinalityData,
+	finalizedFinalityData *arbutil.FinalityData,
+	validatedFinalityData *arbutil.FinalityData,
+) containers.PromiseInterface[struct{}] {
+	return c.comparator.CompareEmpty(
+		c.GetContext(),
+		"SetFinalityData",
+		c.primary.SetFinalityData(safeFinalityData, finalizedFinalityData, validatedFinalityData),
+		c.secondary.SetFinalityData(safeFinalityData, finalizedFinalityData, validatedFinalityData),
+	)
+}
+
+func (c *ComparisonClient) SetConsensusSyncData(syncData *execution.ConsensusSyncData) containers.PromiseInterface[struct{}] {
+	return c.comparator.CompareEmpty(
+		c.GetContext(),
+		"SetConsensusSyncData",
+		c.primary.SetConsensusSyncData(syncData),
+		c.secondary.SetConsensusSyncData(syncData),
+	)
+}
+
+func (c *ComparisonClient) MarkFeedStart(to arbutil.MessageIndex) containers.PromiseInterface[struct{}] {
+	return c.comparator.CompareEmptyWithMsgIdx(
+		c.GetContext(),
+		"MarkFeedStart",
+		to,
+		c.primary.MarkFeedStart(to),
+		c.secondary.MarkFeedStart(to),
+	)
+}
+
+func (c *ComparisonClient) TriggerMaintenance() containers.PromiseInterface[struct{}] {
+	return c.comparator.CompareEmpty(
+		c.GetContext(),
+		"TriggerMaintenance",
+		c.primary.TriggerMaintenance(),
+		c.secondary.TriggerMaintenance(),
+	)
+}
+
+func (c *ComparisonClient) ShouldTriggerMaintenance() containers.PromiseInterface[bool] {
+	return c.comparator.CompareBool(
+		c.GetContext(),
+		"ShouldTriggerMaintenance",
+		c.primary.ShouldTriggerMaintenance(),
+		c.secondary.ShouldTriggerMaintenance(),
+	)
+}
+
+func (c *ComparisonClient) MaintenanceStatus() containers.PromiseInterface[*execution.MaintenanceStatus] {
+	return c.comparator.CompareMaintenanceStatus(
+		c.GetContext(),
+		"MaintenanceStatus",
+		c.primary.MaintenanceStatus(),
+		c.secondary.MaintenanceStatus(),
+	)
+}
+
+func (c *ComparisonClient) ArbOSVersionForMessageIndex(msgIdx arbutil.MessageIndex) containers.PromiseInterface[uint64] {
+	return c.comparator.CompareUint64(
+		c.GetContext(),
+		"ArbOSVersionForMessageIndex",
+		msgIdx,
+		c.primary.ArbOSVersionForMessageIndex(msgIdx),
+		c.secondary.ArbOSVersionForMessageIndex(msgIdx),
+	)
+}
+
+func (c *ComparisonClient) RecordBlockCreation(
+	pos arbutil.MessageIndex,
+	msg *arbostypes.MessageWithMetadata,
+	wasmTargets []rawdb.WasmTarget,
+) containers.PromiseInterface[*execution.RecordResult] {
+	return c.comparator.CompareRecordResult(
+		c.GetContext(),
+		"RecordBlockCreation",
+		pos,
+		c.primary.RecordBlockCreation(pos, msg, wasmTargets),
+		c.secondary.RecordBlockCreation(pos, msg, wasmTargets),
+	)
+}
+
+func (c *ComparisonClient) PrepareForRecord(start, end arbutil.MessageIndex) containers.PromiseInterface[struct{}] {
+	return c.comparator.CompareEmptyWithMsgIdx(
+		c.GetContext(),
+		"PrepareForRecord",
+		start,
+		c.primary.PrepareForRecord(start, end),
+		c.secondary.PrepareForRecord(start, end),
+	)
+}
