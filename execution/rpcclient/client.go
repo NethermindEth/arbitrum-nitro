@@ -4,9 +4,13 @@ package rpcclient
 
 import (
 	"context"
+	"math/big"
 	"strings"
 
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/node"
 
 	"github.com/offchainlabs/nitro/arbos/arbostypes"
@@ -103,4 +107,52 @@ func (c *Client) RecordBlockCreation(pos arbutil.MessageIndex, msg *arbostypes.M
 
 func (c *Client) PrepareForRecord(start, end arbutil.MessageIndex) containers.PromiseInterface[struct{}] {
 	return sendRequest[struct{}](c, "_prepareForRecord", start, end)
+}
+
+// sendEthRequest sends a standard Ethereum JSON-RPC request (without namespace prefix)
+func sendEthRequest[T any](c *Client, method string, args ...any) containers.PromiseInterface[T] {
+	return stopwaiter.LaunchPromiseThread(c, func(ctx context.Context) (T, error) {
+		var res T
+		err := c.client.CallContext(ctx, &res, method, args...)
+		return res, convertError(err)
+	})
+}
+
+// toBlockNumArg converts a block number to JSON-RPC format
+func toBlockNumArg(number *big.Int) string {
+	if number == nil {
+		return "latest"
+	}
+	if number.Sign() < 0 {
+		// Use special block tags for negative numbers
+		return "latest"
+	}
+	return hexutil.EncodeBig(number)
+}
+
+// GetHeaderByNumber retrieves a block header by number using eth_getBlockByNumber
+func (c *Client) GetHeaderByNumber(blockNum *big.Int) containers.PromiseInterface[*types.Header] {
+	return stopwaiter.LaunchPromiseThread(c, func(ctx context.Context) (*types.Header, error) {
+		var head *types.Header
+		err := c.client.CallContext(ctx, &head, "eth_getBlockByNumber", toBlockNumArg(blockNum), false)
+		return head, convertError(err)
+	})
+}
+
+// GetBlockReceipts retrieves all receipts for a block by number using eth_getBlockReceipts
+func (c *Client) GetBlockReceipts(blockNum *big.Int) containers.PromiseInterface[[]*types.Receipt] {
+	return stopwaiter.LaunchPromiseThread(c, func(ctx context.Context) ([]*types.Receipt, error) {
+		var receipts []*types.Receipt
+		err := c.client.CallContext(ctx, &receipts, "eth_getBlockReceipts", toBlockNumArg(blockNum))
+		return receipts, convertError(err)
+	})
+}
+
+// GetBlockByHash retrieves a block by its hash using eth_getBlockByHash (header only)
+func (c *Client) GetHeaderByHash(hash common.Hash) containers.PromiseInterface[*types.Header] {
+	return stopwaiter.LaunchPromiseThread(c, func(ctx context.Context) (*types.Header, error) {
+		var head *types.Header
+		err := c.client.CallContext(ctx, &head, "eth_getBlockByHash", hash, false)
+		return head, convertError(err)
+	})
 }

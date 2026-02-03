@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/big"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/node"
 
@@ -34,10 +37,12 @@ func NewComparisonClient(
 	stack *node.Node,
 	fatalErrChan chan<- error,
 ) *ComparisonClient {
+	primary := executionrpcclient.NewClient(primaryConfig, stack)
+	secondary := executionrpcclient.NewClient(secondaryConfig, nil)
 	return &ComparisonClient{
-		primary:    executionrpcclient.NewClient(primaryConfig, stack),
-		secondary:  executionrpcclient.NewClient(secondaryConfig, nil),
-		comparator: NewComparator(fatalErrChan),
+		primary:    primary,
+		secondary:  secondary,
+		comparator: NewComparator(fatalErrChan, primary, secondary),
 	}
 }
 
@@ -196,5 +201,38 @@ func (c *ComparisonClient) PrepareForRecord(start, end arbutil.MessageIndex) con
 		start,
 		c.primary.PrepareForRecord(start, end),
 		c.secondary.PrepareForRecord(start, end),
+	)
+}
+
+// GetHeaderByNumber retrieves block header by number from both clients and compares
+func (c *ComparisonClient) GetHeaderByNumber(blockNum *big.Int) containers.PromiseInterface[*types.Header] {
+	return c.comparator.CompareHeader(
+		c.GetContext(),
+		"GetHeaderByNumber",
+		blockNum,
+		c.primary.GetHeaderByNumber(blockNum),
+		c.secondary.GetHeaderByNumber(blockNum),
+	)
+}
+
+// GetBlockReceipts retrieves block receipts from both clients and compares
+func (c *ComparisonClient) GetBlockReceipts(blockNum *big.Int) containers.PromiseInterface[[]*types.Receipt] {
+	return c.comparator.CompareReceipts(
+		c.GetContext(),
+		"GetBlockReceipts",
+		blockNum,
+		c.primary.GetBlockReceipts(blockNum),
+		c.secondary.GetBlockReceipts(blockNum),
+	)
+}
+
+// GetHeaderByHash retrieves block header by hash from both clients and compares
+func (c *ComparisonClient) GetHeaderByHash(hash common.Hash) containers.PromiseInterface[*types.Header] {
+	return c.comparator.CompareHeaderByHash(
+		c.GetContext(),
+		"GetHeaderByHash",
+		hash,
+		c.primary.GetHeaderByHash(hash),
+		c.secondary.GetHeaderByHash(hash),
 	)
 }
