@@ -160,6 +160,188 @@ stylus_benchmarks = $(wildcard $(stylus_dir)/*.toml $(stylus_dir)/src/*.rs) $(st
 
 CBROTLI_WASM_BUILD_ARGS ?=-d
 
+# ============================================================================
+# Development Targets (Comparison Execution Mode)
+# ============================================================================
+
+# Database paths
+NITRO_EL_DB ?= /tmp/geth_execution
+NITRO_CL_DB ?= /tmp/nitro_cl
+JWT_SECRET ?= $(HOME)/.arbitrum/jwt.hex
+
+# Network defaults (can be overridden)
+NETWORK ?= sepolia
+
+# Sepolia configuration
+ifeq ($(NETWORK),sepolia)
+  CHAIN_ID := 421614
+  PARENT_CHAIN_ID := 11155111
+  L1_RPC ?= wss://sepolia.drpc.org
+  L1_BEACON ?= https://ethereum-sepolia-beacon-api.publicnode.com
+  GENESIS_HASH := 0x77194da4010e549a7028a9c3c51c3e277823be6ac7d138d0bb8a70197b5c004c
+endif
+
+# Mainnet configuration
+ifeq ($(NETWORK),mainnet)
+  CHAIN_ID := 42161
+  PARENT_CHAIN_ID := 1
+  L1_RPC ?= wss://ethereum.drpc.org
+  L1_BEACON ?= https://ethereum-beacon-api.publicnode.com
+  GENESIS_HASH := 0x7ee576b35482195fc49205cec9af72ce14f003b9ae69f6ba0faef4514be8b442
+endif
+
+.PHONY: clean-el-db
+clean-el-db: ## Clean Nitro EL database
+	@echo "Cleaning Nitro EL database at $(NITRO_EL_DB)..."
+	@rm -rf $(NITRO_EL_DB)/*
+	@mkdir -p $(NITRO_EL_DB)
+
+.PHONY: clean-cl-db
+clean-cl-db: ## Clean Nitro CL database
+	@echo "Cleaning Nitro CL database at $(NITRO_CL_DB)..."
+	@rm -rf $(NITRO_CL_DB)/*
+	@mkdir -p $(NITRO_CL_DB)
+
+.PHONY: clean-dbs
+clean-dbs: clean-el-db clean-cl-db ## Clean both EL and CL databases
+	@echo "All databases cleaned"
+
+.PHONY: init-el
+init-el: $(output_root)/bin/nitro ## Initialize EL with genesis from L1 (then quit)
+	@echo "Initializing Nitro EL for $(NETWORK) (Chain ID: $(CHAIN_ID))..."
+	@echo "  L1 RPC: $(L1_RPC)"
+	@echo "  Expected genesis: $(GENESIS_HASH)"
+	@rm -rf $(NITRO_EL_DB)/*
+	@mkdir -p $(NITRO_EL_DB)
+	$(output_root)/bin/nitro \
+		--chain.id=$(CHAIN_ID) \
+		--parent-chain.id=$(PARENT_CHAIN_ID) \
+		--persistent.global-config=$(NITRO_EL_DB) \
+		--parent-chain.connection.url=$(L1_RPC) \
+		--parent-chain.blob-client.beacon-url=$(L1_BEACON) \
+		--init.then-quit=true \
+		--init.validate-genesis-assertion=false \
+		--node.sequencer=false \
+		--node.batch-poster.enable=false \
+		--node.staker.enable=false \
+		--node.feed.input.url="" \
+		--auth.jwtsecret=$(JWT_SECRET)
+
+.PHONY: run-el
+run-el: $(output_root)/bin/nitro ## Run EL in execution-only mode (waits for CL)
+	@echo "Starting Nitro EL in execution-only mode for $(NETWORK)..."
+	@echo "  Chain ID: $(CHAIN_ID)"
+	@echo "  WebSocket: ws://localhost:20552"
+	@echo "  HTTP: http://localhost:8547"
+	$(output_root)/bin/nitro \
+		--chain.id=$(CHAIN_ID) \
+		--parent-chain.id=$(PARENT_CHAIN_ID) \
+		--persistent.global-config=$(NITRO_EL_DB) \
+		--node.dangerous.no-l1-listener=true \
+		--node.parent-chain-reader.enable=false \
+		--node.sequencer=false \
+		--node.batch-poster.enable=false \
+		--node.staker.enable=false \
+		--node.feed.input.url="" \
+		--execution.rpc-server.enable=true \
+		--execution.rpc-server.authenticated=false \
+		--execution.rpc-server.public=true \
+		--auth.jwtsecret=$(JWT_SECRET) \
+		--auth.addr=0.0.0.0 \
+		--auth.port=8551 \
+		--ws.addr=0.0.0.0 \
+		--ws.port=20552 \
+		--ws.api=net,web3,eth,arb,nitroexecution \
+		--http.addr=0.0.0.0 \
+		--http.port=8547
+
+.PHONY: run-cl
+run-cl: $(output_root)/bin/nitro ## Run CL connecting to EL at ws://localhost:20552
+	@echo "Starting Nitro CL for $(NETWORK)..."
+	@echo "  Chain ID: $(CHAIN_ID)"
+	@echo "  EL URL: ws://localhost:20552"
+	@rm -rf $(NITRO_CL_DB)/*
+	@mkdir -p $(NITRO_CL_DB)
+	$(output_root)/bin/nitro \
+		--chain.id=$(CHAIN_ID) \
+		--parent-chain.id=$(PARENT_CHAIN_ID) \
+		--persistent.global-config=$(NITRO_CL_DB) \
+		--parent-chain.connection.url=$(L1_RPC) \
+		--parent-chain.blob-client.beacon-url=$(L1_BEACON) \
+		--node.execution-rpc-client.url=ws://localhost:20552 \
+		--init.validate-genesis-assertion=false \
+		--node.sequencer=false \
+		--node.batch-poster.enable=false \
+		--node.staker.enable=false \
+		--node.feed.input.url="" \
+		--auth.jwtsecret=$(JWT_SECRET) \
+		--ws.addr=0.0.0.0 \
+		--ws.port=8559 \
+		--http.addr=0.0.0.0 \
+		--http.port=8558
+
+.PHONY: run-cl-comparison
+run-cl-comparison: $(output_root)/bin/nitro ## Run CL in comparison mode (Nitro EL + Nethermind EL)
+	@echo "Starting Nitro CL in COMPARISON MODE for $(NETWORK)..."
+	@echo "  Chain ID: $(CHAIN_ID)"
+	@echo "  Primary EL (Nitro): ws://localhost:20552"
+	@echo "  Secondary EL (Nethermind): ws://localhost:20551"
+	@rm -rf $(NITRO_CL_DB)/*
+	@mkdir -p $(NITRO_CL_DB)
+	$(output_root)/bin/nitro \
+		--chain.id=$(CHAIN_ID) \
+		--parent-chain.id=$(PARENT_CHAIN_ID) \
+		--persistent.global-config=$(NITRO_CL_DB) \
+		--parent-chain.connection.url=$(L1_RPC) \
+		--parent-chain.blob-client.beacon-url=$(L1_BEACON) \
+		--node.execution-rpc-client.url=ws://localhost:20552 \
+		--node.comparison-execution.enable=true \
+		--node.comparison-execution.secondary-rpc-client.url=ws://localhost:20551 \
+		--node.comparison-execution.secondary-rpc-client.jwtsecret=$(JWT_SECRET) \
+		--init.validate-genesis-assertion=false \
+		--node.sequencer=false \
+		--node.batch-poster.enable=false \
+		--node.staker.enable=false \
+		--node.feed.input.url="" \
+		--auth.jwtsecret=$(JWT_SECRET) \
+		--ws.addr=0.0.0.0 \
+		--ws.port=8559 \
+		--http.addr=0.0.0.0 \
+		--http.port=8558
+
+.PHONY: dev-help
+dev-help: ## Show development targets help
+	@echo "Nitro Development Targets"
+	@echo ""
+	@echo "Usage: make <target> [NETWORK=sepolia|mainnet]"
+	@echo ""
+	@echo "Database Management:"
+	@echo "  clean-el-db         Clean EL database ($(NITRO_EL_DB))"
+	@echo "  clean-cl-db         Clean CL database ($(NITRO_CL_DB))"
+	@echo "  clean-dbs           Clean both databases"
+	@echo ""
+	@echo "Initialization:"
+	@echo "  init-el             Initialize EL with genesis from L1 (then quit)"
+	@echo ""
+	@echo "Running:"
+	@echo "  run-el              Run EL in execution-only mode (port 20552)"
+	@echo "  run-cl              Run CL connecting to EL at ws://localhost:20552"
+	@echo "  run-cl-comparison   Run CL comparing Nitro EL (20552) vs Nethermind EL (20551)"
+	@echo ""
+	@echo "Quick Start (Comparison Mode):"
+	@echo "  Terminal 1: make clean-dbs && make init-el && make run-el"
+	@echo "  Terminal 2: (in nethermind-arbitrum) make clean-run-sepolia"
+	@echo "  Terminal 3: make run-cl-comparison"
+	@echo ""
+	@echo "Networks:"
+	@echo "  NETWORK=sepolia (default) - Chain ID: 421614"
+	@echo "  NETWORK=mainnet           - Chain ID: 42161"
+	@echo ""
+	@echo "Example:"
+	@echo "  make init-el NETWORK=mainnet"
+	@echo "  make run-el NETWORK=mainnet"
+
+# ============================================================================
 # user targets
 
 .PHONY: push
