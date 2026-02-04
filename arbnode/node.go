@@ -1476,6 +1476,7 @@ func CreateConsensusNode(
 			)
 			executionClient = comparisonClient
 			executionRecorder = comparisonClient
+			arbOSVersionGetter = comparisonClient
 			log.Info("Comparison execution mode enabled",
 				"primary", cfg.ExecutionRPCClient.URL,
 				"secondary", cfg.ComparisonExecution.SecondaryRPCClient.URL)
@@ -1483,6 +1484,7 @@ func CreateConsensusNode(
 			rpcClient := executionrpcclient.NewClient(execConfigFetcher, stack)
 			executionClient = rpcClient
 			executionRecorder = rpcClient
+			arbOSVersionGetter = rpcClient
 		}
 		// executionSequencer intentionally left nil - RPC client does not implement ExecutionSequencer
 		rpcClient := executionrpcclient.NewClient(execConfigFetcher, stack)
