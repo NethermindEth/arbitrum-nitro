@@ -4,9 +4,12 @@
 package precompiles
 
 import (
+	"fmt"
+
 	"github.com/ethereum/go-ethereum/arbitrum/multigas"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/tracing"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	gethparams "github.com/ethereum/go-ethereum/params"
 
@@ -51,6 +54,11 @@ func (con ArbWasm) ActivateProgram(c ctx, evm mech, value huge, program addr) (u
 	if err := c.Burn(multigas.ResourceKindComputation, 1659168); err != nil {
 		return 0, nil, err
 	}
+
+	if types.IsTargetBlock() {
+		types.OLog2(fmt.Sprintf("precompile activateProgram debug=%t runMode=%d gasLeft=%d", debug, runCtx.GetRawRunMode(), c.GasLeft()))
+	}
+
 	version, codeHash, moduleHash, dataFee, takeAllGas, err := programs.ActivateProgram(evm, program, runCtx, debug)
 	if takeAllGas {
 		_ = c.BurnOut()
