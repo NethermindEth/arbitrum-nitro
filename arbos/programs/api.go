@@ -297,17 +297,11 @@ func newApiClosures(
 		scope.Contract.UsedMultiGas.SaturatingAddInto(cost)
 		hash := evm.StateDB.GetCodeHash(address)
 
-		//if (Out.IsTargetBlock)
-		//	Out.Log($"stylus api accountCodeHash does not exist address={address} " +
-		//			$"exist={vmHostBridge.WorldState.AccountExists(address)} " +
-		//			$"dead={vmHostBridge.WorldState.IsDeadAccount(address)} " +
-		//			$"gasCost={gasCost.SingleGas()}");
-
 		if types.IsTargetBlock() {
 			exist := evm.StateDB.Exist(address)
 			dead := evm.StateDB.HasSelfDestructed(address)
 
-			types.OLog2(fmt.Sprintf("stylus api accountCodeHash does not exist address=%s hash=%s exist=%t dead=%t gasCost=%d", address.String(), hash.String(), exist, dead, cost.SingleGas()))
+			types.OLog2(fmt.Sprintf("stylus api accountCodeHash address=%s hash=%s exist=%t dead=%t gasCost=%d", address.String(), hash.String(), exist, dead, cost.SingleGas()))
 		}
 
 		return hash, cost.SingleGas()
