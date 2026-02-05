@@ -304,7 +304,10 @@ func newApiClosures(
 		//			$"gasCost={gasCost.SingleGas()}");
 
 		if types.IsTargetBlock() {
-			types.OLog2(fmt.Sprintf("stylus api accountCodeHash does not exist address=%s hash=%s exist=? dead=? gasCost=%d", address.String(), hash.String(), cost.SingleGas()))
+			exist := evm.StateDB.Exist(address)
+			dead := evm.StateDB.HasSelfDestructed(address)
+
+			types.OLog2(fmt.Sprintf("stylus api accountCodeHash does not exist address=%s hash=%s exist=%t dead=%t gasCost=%d", address.String(), hash.String(), exist, dead, cost.SingleGas()))
 		}
 
 		return hash, cost.SingleGas()
