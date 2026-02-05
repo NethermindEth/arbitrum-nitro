@@ -295,7 +295,19 @@ func newApiClosures(
 	accountCodehash := func(address common.Address) (common.Hash, uint64) {
 		cost := vm.WasmAccountTouchCost(chainConfig, evm.StateDB, address, false)
 		scope.Contract.UsedMultiGas.SaturatingAddInto(cost)
-		return evm.StateDB.GetCodeHash(address), cost.SingleGas()
+		hash := evm.StateDB.GetCodeHash(address)
+
+		//if (Out.IsTargetBlock)
+		//	Out.Log($"stylus api accountCodeHash does not exist address={address} " +
+		//			$"exist={vmHostBridge.WorldState.AccountExists(address)} " +
+		//			$"dead={vmHostBridge.WorldState.IsDeadAccount(address)} " +
+		//			$"gasCost={gasCost.SingleGas()}");
+
+		if types.IsTargetBlock() {
+			types.OLog2(fmt.Sprintf("stylus api accountCodeHash does not exist address=%s hash=%s exist=? dead=? gasCost=%d", address.String(), hash.String(), cost.SingleGas()))
+		}
+
+		return hash, cost.SingleGas()
 	}
 	addPages := func(pages uint16) uint64 {
 		open, ever := db.AddStylusPages(pages)
