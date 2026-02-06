@@ -164,10 +164,18 @@ CBROTLI_WASM_BUILD_ARGS ?=-d
 # Development Targets (Comparison Execution Mode)
 # ============================================================================
 
-# Database paths
-NITRO_EL_DB ?= /tmp/geth_execution
-NITRO_CL_DB ?= /tmp/nitro_cl
+# Data directory (persistent, in repo)
+DATA_DIR := $(CURDIR)/.data
+
+# Database paths (default, overridden by network-specific targets)
+NITRO_EL_DB ?= $(DATA_DIR)/nitro/default/el
+NITRO_CL_DB ?= $(DATA_DIR)/nitro/default/cl
 JWT_SECRET ?= $(HOME)/.arbitrum/jwt.hex
+
+# Snapshot cache (shared across projects)
+SNAPSHOT_CACHE_DIR := $(HOME)/.cache/blockchain-snapshots/nitro
+MAINNET_GENESIS_SNAPSHOT := nitro-genesis-pebble.tar
+MAINNET_GENESIS_SNAPSHOT_URL := https://snapshot.arbitrum.foundation/arb1/$(MAINNET_GENESIS_SNAPSHOT)
 
 # Network defaults (can be overridden)
 NETWORK ?= sepolia
@@ -219,6 +227,7 @@ init-el: $(output_root)/bin/nitro ## Initialize EL with genesis from L1 (then qu
 		--persistent.global-config=$(NITRO_EL_DB) \
 		--parent-chain.connection.url=$(L1_RPC) \
 		--parent-chain.blob-client.beacon-url=$(L1_BEACON) \
+		--init.latest=genesis \
 		--init.then-quit=true \
 		--init.validate-genesis-assertion=false \
 		--node.sequencer=false \
@@ -237,6 +246,8 @@ run-el: $(output_root)/bin/nitro ## Run EL in execution-only mode (waits for CL)
 		--chain.id=$(CHAIN_ID) \
 		--parent-chain.id=$(PARENT_CHAIN_ID) \
 		--persistent.global-config=$(NITRO_EL_DB) \
+		--init.empty=true \
+		--init.validate-genesis-assertion=false \
 		--node.dangerous.no-l1-listener=true \
 		--node.parent-chain-reader.enable=false \
 		--node.sequencer=false \
@@ -269,6 +280,7 @@ run-cl: $(output_root)/bin/nitro ## Run CL connecting to EL at ws://localhost:20
 		--parent-chain.connection.url=$(L1_RPC) \
 		--parent-chain.blob-client.beacon-url=$(L1_BEACON) \
 		--node.execution-rpc-client.url=ws://localhost:20552 \
+		--init.empty=true \
 		--init.validate-genesis-assertion=false \
 		--node.sequencer=false \
 		--node.batch-poster.enable=false \
@@ -285,7 +297,7 @@ run-cl-comparison: $(output_root)/bin/nitro ## Run CL in comparison mode (Nitro 
 	@echo "Starting Nitro CL in COMPARISON MODE for $(NETWORK)..."
 	@echo "  Chain ID: $(CHAIN_ID)"
 	@echo "  Primary EL (Nitro): ws://localhost:20552"
-	@echo "  Secondary EL (Nethermind): ws://localhost:20551"
+	@echo "  Secondary EL (Nethermind): http://localhost:20551"
 	@rm -rf $(NITRO_CL_DB)/*
 	@mkdir -p $(NITRO_CL_DB)
 	$(output_root)/bin/nitro \
@@ -296,8 +308,9 @@ run-cl-comparison: $(output_root)/bin/nitro ## Run CL in comparison mode (Nitro 
 		--parent-chain.blob-client.beacon-url=$(L1_BEACON) \
 		--node.execution-rpc-client.url=ws://localhost:20552 \
 		--node.comparison-execution.enable=true \
-		--node.comparison-execution.secondary-rpc-client.url=ws://localhost:20551 \
+		--node.comparison-execution.secondary-rpc-client.url=http://localhost:20551 \
 		--node.comparison-execution.secondary-rpc-client.jwtsecret=$(JWT_SECRET) \
+		--init.empty=true \
 		--init.validate-genesis-assertion=false \
 		--node.sequencer=false \
 		--node.batch-poster.enable=false \
@@ -313,33 +326,160 @@ run-cl-comparison: $(output_root)/bin/nitro ## Run CL in comparison mode (Nitro 
 dev-help: ## Show development targets help
 	@echo "Nitro Development Targets"
 	@echo ""
-	@echo "Usage: make <target> [NETWORK=sepolia|mainnet]"
+	@echo "Usage: make <target> or make <target>-sepolia / <target>-mainnet"
 	@echo ""
 	@echo "Database Management:"
-	@echo "  clean-el-db         Clean EL database ($(NITRO_EL_DB))"
-	@echo "  clean-cl-db         Clean CL database ($(NITRO_CL_DB))"
-	@echo "  clean-dbs           Clean both databases"
+	@echo "  clean-el-db[-sepolia|-mainnet]   Clean EL database"
+	@echo "  clean-cl-db[-sepolia|-mainnet]   Clean CL database"
+	@echo "  clean-dbs[-sepolia|-mainnet]     Clean both databases"
 	@echo ""
 	@echo "Initialization:"
-	@echo "  init-el             Initialize EL with genesis from L1 (then quit)"
+	@echo "  init-el[-sepolia|-mainnet]       Initialize EL (mainnet uses cache if available)"
+	@echo ""
+	@echo "Snapshot Cache (~/.cache/blockchain-snapshots/nitro):"
+	@echo "  download-snapshot-mainnet        Download mainnet genesis snapshot (~32GB)"
+	@echo "  snapshot-cache-status            Show cache status"
+	@echo "  clean-snapshot-cache             Remove cached snapshots"
 	@echo ""
 	@echo "Running:"
-	@echo "  run-el              Run EL in execution-only mode (port 20552)"
-	@echo "  run-cl              Run CL connecting to EL at ws://localhost:20552"
-	@echo "  run-cl-comparison   Run CL comparing Nitro EL (20552) vs Nethermind EL (20551)"
+	@echo "  run-el[-sepolia|-mainnet]        Run EL in execution-only mode (port 20552)"
+	@echo "  run-cl[-sepolia|-mainnet]        Run CL connecting to EL"
+	@echo "  run-cl-comparison[-sepolia|-mainnet]  Compare Nitro EL vs Nethermind EL"
 	@echo ""
-	@echo "Quick Start (Comparison Mode):"
-	@echo "  Terminal 1: make clean-dbs && make init-el && make run-el"
-	@echo "  Terminal 2: (in nethermind-arbitrum) make clean-run-sepolia"
-	@echo "  Terminal 3: make run-cl-comparison"
+	@echo "Quick Start (Comparison Mode - Sepolia):"
+	@echo "  Terminal 1: make clean-dbs-sepolia && make init-el-sepolia && make run-el-sepolia"
+	@echo "  Terminal 2: (in nethermind-arbitrum) make run-sepolia"
+	@echo "  Terminal 3: make run-cl-comparison-sepolia"
 	@echo ""
-	@echo "Networks:"
-	@echo "  NETWORK=sepolia (default) - Chain ID: 421614"
-	@echo "  NETWORK=mainnet           - Chain ID: 42161"
+	@echo "Quick Start (Comparison Mode - Mainnet):"
+	@echo "  First time: make download-snapshot-mainnet  # ~32GB, one-time download (optional)"
+	@echo "  Terminal 1: make clean-dbs-mainnet && make init-el-mainnet && make run-el-mainnet"
+	@echo "  Terminal 2: (in nethermind-arbitrum) make run-mainnet"
+	@echo "  Terminal 3: make run-cl-comparison-mainnet"
+
+# ============================================================================
+# Explicit Sepolia Targets
+# ============================================================================
+
+.PHONY: clean-el-db-sepolia
+clean-el-db-sepolia: ## Clean Sepolia EL database
+	@$(MAKE) clean-el-db NETWORK=sepolia NITRO_EL_DB=$(DATA_DIR)/nitro/sepolia/el
+
+.PHONY: clean-cl-db-sepolia
+clean-cl-db-sepolia: ## Clean Sepolia CL database
+	@$(MAKE) clean-cl-db NETWORK=sepolia NITRO_CL_DB=$(DATA_DIR)/nitro/sepolia/cl
+
+.PHONY: clean-dbs-sepolia
+clean-dbs-sepolia: ## Clean both Sepolia databases
+	@$(MAKE) clean-dbs NETWORK=sepolia NITRO_EL_DB=$(DATA_DIR)/nitro/sepolia/el NITRO_CL_DB=$(DATA_DIR)/nitro/sepolia/cl
+
+.PHONY: init-el-sepolia
+init-el-sepolia: $(output_root)/bin/nitro ## Initialize Sepolia EL with genesis from L1
+	@$(MAKE) init-el NETWORK=sepolia NITRO_EL_DB=$(DATA_DIR)/nitro/sepolia/el
+
+.PHONY: run-el-sepolia
+run-el-sepolia: $(output_root)/bin/nitro ## Run Sepolia EL in execution-only mode
+	@$(MAKE) run-el NETWORK=sepolia NITRO_EL_DB=$(DATA_DIR)/nitro/sepolia/el
+
+.PHONY: run-cl-sepolia
+run-cl-sepolia: $(output_root)/bin/nitro ## Run Sepolia CL connecting to EL
+	@$(MAKE) run-cl NETWORK=sepolia NITRO_CL_DB=$(DATA_DIR)/nitro/sepolia/cl
+
+.PHONY: run-cl-comparison-sepolia
+run-cl-comparison-sepolia: $(output_root)/bin/nitro ## Run Sepolia CL in comparison mode
+	@$(MAKE) run-cl-comparison NETWORK=sepolia NITRO_CL_DB=$(DATA_DIR)/nitro/sepolia/cl
+
+# ============================================================================
+# Explicit Mainnet Targets
+# ============================================================================
+
+.PHONY: clean-el-db-mainnet
+clean-el-db-mainnet: ## Clean Mainnet EL database
+	@$(MAKE) clean-el-db NETWORK=mainnet NITRO_EL_DB=$(DATA_DIR)/nitro/mainnet/el
+
+.PHONY: clean-cl-db-mainnet
+clean-cl-db-mainnet: ## Clean Mainnet CL database
+	@$(MAKE) clean-cl-db NETWORK=mainnet NITRO_CL_DB=$(DATA_DIR)/nitro/mainnet/cl
+
+.PHONY: clean-dbs-mainnet
+clean-dbs-mainnet: ## Clean both Mainnet databases
+	@$(MAKE) clean-dbs NETWORK=mainnet NITRO_EL_DB=$(DATA_DIR)/nitro/mainnet/el NITRO_CL_DB=$(DATA_DIR)/nitro/mainnet/cl
+
+.PHONY: init-el-mainnet
+init-el-mainnet: $(output_root)/bin/nitro ## Initialize Mainnet EL (uses cache if available)
+	@if [ -d "$(DATA_DIR)/nitro/mainnet/el/arb1/nitro/l2chaindata" ]; then \
+		echo "Mainnet EL database already exists at $(DATA_DIR)/nitro/mainnet/el"; \
+		echo "Run 'make clean-el-db-mainnet' first to reinitialize."; \
+	elif [ -f "$(SNAPSHOT_CACHE_DIR)/$(MAINNET_GENESIS_SNAPSHOT)" ]; then \
+		echo "Restoring mainnet genesis from cached snapshot..."; \
+		mkdir -p "$(DATA_DIR)/nitro/mainnet/el/arb1/nitro"; \
+		tar -xf "$(SNAPSHOT_CACHE_DIR)/$(MAINNET_GENESIS_SNAPSHOT)" -C "$(DATA_DIR)/nitro/mainnet/el/arb1/nitro"; \
+		echo "Mainnet EL initialized from cache."; \
+	else \
+		echo "No cached snapshot. Downloading from L1 (run 'make download-snapshot-mainnet' to cache for future use)..."; \
+		$(MAKE) init-el NETWORK=mainnet NITRO_EL_DB=$(DATA_DIR)/nitro/mainnet/el; \
+	fi
+
+.PHONY: run-el-mainnet
+run-el-mainnet: $(output_root)/bin/nitro ## Run Mainnet EL in execution-only mode
+	@$(MAKE) run-el NETWORK=mainnet NITRO_EL_DB=$(DATA_DIR)/nitro/mainnet/el
+
+.PHONY: run-cl-mainnet
+run-cl-mainnet: $(output_root)/bin/nitro ## Run Mainnet CL connecting to EL
+	@$(MAKE) run-cl NETWORK=mainnet NITRO_CL_DB=$(DATA_DIR)/nitro/mainnet/cl
+
+.PHONY: run-cl-comparison-mainnet
+run-cl-comparison-mainnet: $(output_root)/bin/nitro ## Run Mainnet CL in comparison mode
+	@$(MAKE) run-cl-comparison NETWORK=mainnet NITRO_CL_DB=$(DATA_DIR)/nitro/mainnet/cl
+
+# ============================================================================
+# Snapshot Cache Management
+# ============================================================================
+
+.PHONY: download-snapshot-mainnet
+download-snapshot-mainnet: ## Download mainnet genesis snapshot to cache (~32GB)
+	@echo "Downloading mainnet genesis snapshot to cache..."
+	@echo "  URL: $(MAINNET_GENESIS_SNAPSHOT_URL)"
+	@echo "  Size: ~32GB - this may take a while"
+	@mkdir -p "$(SNAPSHOT_CACHE_DIR)"
+	@if command -v aria2c > /dev/null 2>&1; then \
+		echo "Using aria2c (16 connections for faster download)..."; \
+		aria2c -x 16 -s 16 -k 1M -c \
+			-d "$(SNAPSHOT_CACHE_DIR)" -o "$(MAINNET_GENESIS_SNAPSHOT)" "$(MAINNET_GENESIS_SNAPSHOT_URL)"; \
+	else \
+		echo "Using curl (install aria2 for faster downloads: brew install aria2)..."; \
+		curl -L -C - --retry 5 --retry-delay 5 --progress-bar \
+			-o "$(SNAPSHOT_CACHE_DIR)/$(MAINNET_GENESIS_SNAPSHOT)" "$(MAINNET_GENESIS_SNAPSHOT_URL)"; \
+	fi
+	@echo "Verifying download..."
+	@if tar -tf "$(SNAPSHOT_CACHE_DIR)/$(MAINNET_GENESIS_SNAPSHOT)" > /dev/null 2>&1; then \
+		echo "Snapshot downloaded and cached successfully at $(SNAPSHOT_CACHE_DIR)/$(MAINNET_GENESIS_SNAPSHOT)"; \
+		ls -lh "$(SNAPSHOT_CACHE_DIR)/$(MAINNET_GENESIS_SNAPSHOT)"; \
+	else \
+		echo "ERROR: Download corrupted. Removing and try again."; \
+		rm -f "$(SNAPSHOT_CACHE_DIR)/$(MAINNET_GENESIS_SNAPSHOT)"; \
+		exit 1; \
+	fi
+
+.PHONY: snapshot-cache-status
+snapshot-cache-status: ## Show snapshot cache status
+	@echo "=== Nitro Snapshot Cache Status ==="
+	@echo "Cache directory: $(SNAPSHOT_CACHE_DIR)"
 	@echo ""
-	@echo "Example:"
-	@echo "  make init-el NETWORK=mainnet"
-	@echo "  make run-el NETWORK=mainnet"
+	@if [ -f "$(SNAPSHOT_CACHE_DIR)/$(MAINNET_GENESIS_SNAPSHOT)" ]; then \
+		echo "Mainnet Genesis: CACHED"; \
+		ls -lh "$(SNAPSHOT_CACHE_DIR)/$(MAINNET_GENESIS_SNAPSHOT)"; \
+	else \
+		echo "Mainnet Genesis: NOT CACHED"; \
+		echo "  Run 'make download-snapshot-mainnet' to download (~32GB)"; \
+	fi
+	@echo ""
+	@echo "Note: Sepolia does not have a genesis snapshot (syncs from L1)"
+
+.PHONY: clean-snapshot-cache
+clean-snapshot-cache: ## Remove snapshot cache
+	@rm -rf "$(SNAPSHOT_CACHE_DIR)"
+	@echo "Snapshot cache cleared."
 
 # ============================================================================
 # user targets
