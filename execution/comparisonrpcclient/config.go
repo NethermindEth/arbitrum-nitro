@@ -9,8 +9,9 @@ import (
 )
 
 type ComparisonExecutionConfig struct {
-	Enable             bool                   `json:"enable,omitempty" koanf:"enable"`
-	SecondaryRPCClient rpcclient.ClientConfig `json:"secondary-rpc-client,omitempty" koanf:"secondary-rpc-client"`
+	Enable               bool                   `json:"enable,omitempty" koanf:"enable"`
+	UseInternalSequencer bool                   `json:"use-internal-sequencer,omitempty" koanf:"use-internal-sequencer"`
+	SecondaryRPCClient   rpcclient.ClientConfig `json:"secondary-rpc-client,omitempty" koanf:"secondary-rpc-client"`
 }
 
 var DefaultComparisonExecutionConfig = ComparisonExecutionConfig{
@@ -28,5 +29,6 @@ var DefaultComparisonExecutionConfig = ComparisonExecutionConfig{
 
 func ComparisonExecutionConfigAddOptions(prefix string, f *pflag.FlagSet) {
 	f.Bool(prefix+".enable", DefaultComparisonExecutionConfig.Enable, "enable comparison mode to compare primary and secondary execution clients")
+	f.Bool(prefix+".use-internal-sequencer", DefaultComparisonExecutionConfig.UseInternalSequencer, "use internal execution client for sequencing while using RPC clients for comparison (enables sequencer mode in comparison)")
 	rpcclient.RPCClientAddOptions(prefix+".secondary-rpc-client", f, &DefaultComparisonExecutionConfig.SecondaryRPCClient)
 }

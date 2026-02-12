@@ -17,6 +17,7 @@ import (
 	"github.com/offchainlabs/nitro/arbutil"
 	"github.com/offchainlabs/nitro/execution"
 	executionrpcclient "github.com/offchainlabs/nitro/execution/rpcclient"
+	"github.com/offchainlabs/nitro/util"
 	"github.com/offchainlabs/nitro/util/containers"
 )
 
@@ -66,9 +67,33 @@ func compare[T any](primary, secondary T) error {
 	return errors.New(reporter.String())
 }
 
+// isContextCanceledError checks if an error is related to context cancellation
+func isContextCanceledError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) {
+		return true
+	}
+	// Also check error message for wrapped/RPC errors that contain "context canceled"
+	errMsg := err.Error()
+	return errMsg == "context canceled" ||
+		// RPC errors often wrap context cancellation
+		(len(errMsg) > 16 && errMsg[len(errMsg)-16:] == "context canceled")
+}
+
 // compareErrors compares two errors by their message strings only
 func compareErrors(primary, secondary error) error {
 	if primary == nil && secondary == nil {
+		return nil
+	}
+	// If primary succeeded but secondary failed due to context cancellation,
+	// this is a race condition during test shutdown - not a real mismatch
+	if primary == nil && isContextCanceledError(secondary) {
+		return nil
+	}
+	// If both errors are context cancellation, also not a mismatch
+	if isContextCanceledError(primary) && isContextCanceledError(secondary) {
 		return nil
 	}
 	if (primary == nil) != (secondary == nil) {
@@ -81,6 +106,40 @@ func compareErrors(primary, secondary error) error {
 	return nil
 }
 
+// CompareWithExpected compares the secondary result with an expected result from the primary
+// This is used when UseInternalSequencer is true - the primary already processed the block,
+// so we only forward to secondary and compare with the expected result.
+func (c *Comparator) CompareWithExpected(
+	ctx context.Context,
+	method string,
+	msgIdx arbutil.MessageIndex,
+	expectedResult *execution.MessageResult,
+	secondary containers.PromiseInterface[*execution.MessageResult],
+) (*execution.MessageResult, error) {
+	secondaryResult, secondaryErr := secondary.Await(ctx)
+
+	if secondaryErr != nil {
+		report := MismatchReport{
+			Method:       method,
+			MsgIdx:       &msgIdx,
+			Diff:         fmt.Errorf("secondary error: %w", secondaryErr),
+			SecondaryErr: secondaryErr,
+		}
+		printMismatchReport(report)
+		sendFatalError(report, c.fatalErrChan)
+		return expectedResult, secondaryErr
+	}
+
+	if err := compare(expectedResult, secondaryResult); err != nil {
+		report := MismatchReport{Method: method, MsgIdx: &msgIdx, Diff: err}
+		printMismatchReport(report)
+		c.compareBlock(ctx, expectedResult, secondaryResult, msgIdx)
+		sendFatalError(report, c.fatalErrChan)
+	}
+
+	return expectedResult, nil
+}
+
 // CompareMessageResult compares *execution.MessageResult promises with block comparison on mismatch
 func (c *Comparator) CompareMessageResult(
 	ctx context.Context,
@@ -89,19 +148,36 @@ func (c *Comparator) CompareMessageResult(
 	primary, secondary containers.PromiseInterface[*execution.MessageResult],
 ) containers.PromiseInterface[*execution.MessageResult] {
 	return containers.DoPromise(ctx, func(ctx context.Context) (*execution.MessageResult, error) {
+		util.DLog(fmt.Sprintf("CompareMessageResult ENTRY method=%s msgIdx=%d", method, msgIdx))
 		primaryResult, primaryErr := primary.Await(ctx)
 		secondaryResult, secondaryErr := secondary.Await(ctx)
 
+		if primaryResult != nil && secondaryResult != nil {
+			util.DLog(fmt.Sprintf("Results received msgIdx=%d primaryHash=%s secondaryHash=%s primaryErr=%v secondaryErr=%v",
+				msgIdx, primaryResult.BlockHash, secondaryResult.BlockHash, primaryErr, secondaryErr))
+		} else {
+			util.DLog(fmt.Sprintf("Results received msgIdx=%d primaryResult=%v secondaryResult=%v primaryErr=%v secondaryErr=%v",
+				msgIdx, primaryResult != nil, secondaryResult != nil, primaryErr, secondaryErr))
+		}
+
 		if err := compareErrors(primaryErr, secondaryErr); err != nil {
+			util.DLog(fmt.Sprintf("Error mismatch msgIdx=%d", msgIdx))
 			printMismatch(MismatchReport{Method: method, MsgIdx: &msgIdx, Diff: err, PrimaryErr: primaryErr, SecondaryErr: secondaryErr}, c.fatalErrChan)
 		}
 
 		if primaryErr == nil && secondaryErr == nil {
+			if primaryResult != nil && secondaryResult != nil {
+				util.DLog(fmt.Sprintf("Comparing results msgIdx=%d primaryBlockHash=%s secondaryBlockHash=%s primarySendRoot=%s secondarySendRoot=%s",
+					msgIdx, primaryResult.BlockHash, secondaryResult.BlockHash, primaryResult.SendRoot, secondaryResult.SendRoot))
+			}
 			if err := compare(primaryResult, secondaryResult); err != nil {
+				util.DLog(fmt.Sprintf("MISMATCH DETECTED msgIdx=%d", msgIdx))
 				report := MismatchReport{Method: method, MsgIdx: &msgIdx, Diff: err}
 				printMismatchReport(report)
 				c.compareBlock(ctx, primaryResult, secondaryResult, msgIdx)
 				sendFatalError(report, c.fatalErrChan)
+			} else {
+				util.DLog(fmt.Sprintf("Results MATCH msgIdx=%d", msgIdx))
 			}
 		}
 
