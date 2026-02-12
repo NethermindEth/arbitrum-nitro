@@ -1198,7 +1198,15 @@ func createNodeImpl(
 		return nil, err
 	}
 
-	txStreamer, err := getTransactionStreamer(ctx, consensusDB, l2Config, executionClient, broadcastServer, configFetcher, fatalErrChan)
+	// When UseInternalSequencer is true, the TransactionStreamer should use the internal
+	// execution client (executionSequencer) for DigestMessage, not the comparison client.
+	// This avoids conflicts where the comparison client tries to digest messages that the
+	// internal sequencer is already processing.
+	txStreamerExec := executionClient
+	if config.ComparisonExecution.Enable && config.ComparisonExecution.UseInternalSequencer && executionSequencer != nil {
+		txStreamerExec = executionSequencer
+	}
+	txStreamer, err := getTransactionStreamer(ctx, consensusDB, l2Config, txStreamerExec, broadcastServer, configFetcher, fatalErrChan)
 	if err != nil {
 		return nil, err
 	}
@@ -1477,16 +1485,25 @@ func CreateConsensusNode(
 			executionClient = comparisonClient
 			executionRecorder = comparisonClient
 			arbOSVersionGetter = comparisonClient
-			log.Info("Comparison execution mode enabled",
-				"primary", cfg.ExecutionRPCClient.URL,
-				"secondary", cfg.ComparisonExecution.SecondaryRPCClient.URL)
+			// When UseInternalSequencer is true, use the internal execution client for sequencing
+			// This enables sequencer mode while still using comparison for validation
+			if cfg.ComparisonExecution.UseInternalSequencer && fullExecutionClient != nil {
+				executionSequencer = fullExecutionClient
+				log.Info("Comparison execution mode enabled with internal sequencer",
+					"primary", cfg.ExecutionRPCClient.URL,
+					"secondary", cfg.ComparisonExecution.SecondaryRPCClient.URL)
+			} else {
+				log.Info("Comparison execution mode enabled",
+					"primary", cfg.ExecutionRPCClient.URL,
+					"secondary", cfg.ComparisonExecution.SecondaryRPCClient.URL)
+			}
 		} else {
 			rpcClient := executionrpcclient.NewClient(execConfigFetcher, stack)
 			executionClient = rpcClient
 			executionRecorder = rpcClient
 			arbOSVersionGetter = rpcClient
 		}
-		// executionSequencer intentionally left nil - RPC client does not implement ExecutionSequencer
+		// executionSequencer intentionally left nil when not using internal sequencer - RPC client does not implement ExecutionSequencer
 	} else {
 		executionClient = fullExecutionClient
 		executionRecorder = fullExecutionClient
@@ -1711,7 +1728,21 @@ func (n *Node) StopAndWait() {
 
 func (n *Node) WriteMessageFromSequencer(pos arbutil.MessageIndex, msgWithMeta arbostypes.MessageWithMetadata, msgResult execution.MessageResult, blockMetadata common.BlockMetadata) containers.PromiseInterface[struct{}] {
 	err := n.TxStreamer.WriteMessageFromSequencer(pos, msgWithMeta, msgResult, blockMetadata)
-	return containers.NewReadyPromise(struct{}{}, err)
+	if err != nil {
+		return containers.NewReadyPromise(struct{}{}, err)
+	}
+
+	// When using comparison mode with internal sequencer, forward the message to the secondary
+	// for comparison. The primary (internal) already processed it, so we only need to compare.
+	if comparisonClient, ok := n.ExecutionClient.(*comparisonrpcclient.ComparisonClient); ok {
+		// Forward to secondary and compare with expected result
+		_, err = comparisonClient.ForwardToSecondary(pos, &msgWithMeta, &msgResult).Await(n.ctx)
+		if err != nil {
+			log.Error("Comparison mismatch in ForwardToSecondary", "pos", pos, "err", err)
+		}
+	}
+
+	return containers.NewReadyPromise(struct{}{}, nil)
 }
 
 func (n *Node) ExpectChosenSequencer() containers.PromiseInterface[struct{}] {

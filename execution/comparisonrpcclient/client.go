@@ -64,6 +64,50 @@ func (c *ComparisonClient) StopAndWait() {
 	c.StopWaiter.StopAndWait()
 }
 
+// ForwardToSecondary forwards a message to only the secondary execution client
+// and compares the result with the expected result from the primary.
+// This is used when UseInternalSequencer is true - the primary (internal) already
+// processed the block, so we only need to forward to secondary and compare.
+func (c *ComparisonClient) ForwardToSecondary(
+	msgIdx arbutil.MessageIndex,
+	msg *arbostypes.MessageWithMetadata,
+	expectedResult *execution.MessageResult,
+) containers.PromiseInterface[*execution.MessageResult] {
+	secondaryPromise := c.secondary.DigestMessage(msgIdx, msg, nil)
+	return containers.NewReadyPromise(c.comparator.CompareWithExpected(
+		c.GetContext(),
+		"ForwardToSecondary",
+		msgIdx,
+		expectedResult,
+		secondaryPromise,
+	))
+}
+
+// PrimaryResultAtMessageIndex returns the result from the primary execution client only,
+// without comparing to secondary. Used to get expected results before secondary is initialized.
+func (c *ComparisonClient) PrimaryResultAtMessageIndex(msgIdx arbutil.MessageIndex) containers.PromiseInterface[*execution.MessageResult] {
+	return c.primary.ResultAtMessageIndex(msgIdx)
+}
+
+// ForwardInitToSecondary forwards an init message (msgIdx 0) to the secondary
+// execution client and compares the result with the expected result from the primary.
+// This is used when UseInternalSequencer is true to initialize the secondary with
+// the same genesis state as the primary and verify they match.
+func (c *ComparisonClient) ForwardInitToSecondary(
+	msg *arbostypes.MessageWithMetadata,
+	expectedResult *execution.MessageResult,
+) containers.PromiseInterface[*execution.MessageResult] {
+	log.Info("Forwarding init message to secondary execution client with comparison")
+	secondaryPromise := c.secondary.DigestMessage(0, msg, nil)
+	return containers.NewReadyPromise(c.comparator.CompareWithExpected(
+		c.GetContext(),
+		"ForwardInitToSecondary",
+		0,
+		expectedResult,
+		secondaryPromise,
+	))
+}
+
 func (c *ComparisonClient) DigestMessage(
 	msgIdx arbutil.MessageIndex,
 	msg *arbostypes.MessageWithMetadata,

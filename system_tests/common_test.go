@@ -76,6 +76,7 @@ import (
 	dapserver "github.com/offchainlabs/nitro/daprovider/server"
 	"github.com/offchainlabs/nitro/deploy"
 	"github.com/offchainlabs/nitro/execution"
+	"github.com/offchainlabs/nitro/execution/comparisonrpcclient"
 	"github.com/offchainlabs/nitro/execution/gethexec"
 	"github.com/offchainlabs/nitro/execution/gethexec/eventfilter"
 	_ "github.com/offchainlabs/nitro/execution/nodeinterface"
@@ -105,6 +106,148 @@ import (
 	rediscons "github.com/offchainlabs/nitro/validator/valnode/redis"
 	valnoderedis "github.com/offchainlabs/nitro/validator/valnode/redis"
 )
+
+// ExecutionMode represents the test execution mode for multi-EL testing
+type ExecutionMode string
+
+const (
+	ExecutionModeInternal   ExecutionMode = "internal"   // Direct in-process EL (default)
+	ExecutionModeSelf       ExecutionMode = "self"       // Loopback RPC to same node
+	ExecutionModeExternal   ExecutionMode = "external"   // External EL (e.g., Nethermind)
+	ExecutionModeComparison ExecutionMode = "comparison" // Dual EL validation mode
+)
+
+// ExecutionConfig holds configuration for external/comparison execution modes
+type ExecutionConfig struct {
+	Mode         ExecutionMode
+	PrimaryURL   string
+	SecondaryURL string
+}
+
+// getExecutionMode returns the configured execution mode from env vars or flags
+func getExecutionMode() ExecutionMode {
+	// Environment variable takes precedence
+	if mode := os.Getenv("NITRO_EXECUTION_MODE"); mode != "" {
+		return ExecutionMode(mode)
+	}
+	// Fall back to test flag
+	if testflag.ExecutionMode != nil && *testflag.ExecutionMode != "" {
+		return ExecutionMode(*testflag.ExecutionMode)
+	}
+	return ExecutionModeInternal // Default
+}
+
+// getExecutionConfig returns the full execution configuration
+func getExecutionConfig() ExecutionConfig {
+	mode := getExecutionMode()
+
+	primaryURL := os.Getenv("NITRO_PRIMARY_EL_URL")
+	if primaryURL == "" && testflag.PrimaryELURL != nil {
+		primaryURL = *testflag.PrimaryELURL
+	}
+	if primaryURL == "" {
+		primaryURL = "ws://127.0.0.1:8551" // Default
+	}
+
+	secondaryURL := os.Getenv("NITRO_SECONDARY_EL_URL")
+	if secondaryURL == "" && testflag.SecondaryELURL != nil {
+		secondaryURL = *testflag.SecondaryELURL
+	}
+	if secondaryURL == "" {
+		secondaryURL = "http://127.0.0.1:8552" // Default
+	}
+
+	return ExecutionConfig{
+		Mode:         mode,
+		PrimaryURL:   primaryURL,
+		SecondaryURL: secondaryURL,
+	}
+}
+
+// isExternalExecutionMode returns true if mode requires external EL
+func isExternalExecutionMode(mode ExecutionMode) bool {
+	return mode == ExecutionModeExternal || mode == ExecutionModeComparison
+}
+
+// applyExecutionMode configures nodeConfig based on execution mode
+func applyExecutionMode(nodeConfig *arbnode.Config, execConfig *gethexec.Config,
+	stackConfig *node.Config, config ExecutionConfig) {
+
+	switch config.Mode {
+	case ExecutionModeInternal:
+		// Default - direct in-process connection (no changes needed)
+		nodeConfig.ExecutionRPCClient.URL = ""
+
+	case ExecutionModeSelf:
+		// Loopback RPC mode - use existing helper
+		if execConfig != nil && stackConfig != nil {
+			configureConsensusExecutionOverRPC(execConfig, nodeConfig, stackConfig)
+		}
+
+	case ExecutionModeExternal:
+		// External EL (e.g., Nethermind)
+		nodeConfig.ExecutionRPCClient.URL = config.PrimaryURL
+
+	case ExecutionModeComparison:
+		// Comparison mode: primary is self-exposed via websocket, secondary is external (e.g., Nethermind)
+		// This allows the test node to act as both sequencer AND primary EL for comparison
+		if execConfig != nil && stackConfig != nil {
+			// Configure the node to expose its EL via websocket
+			if stackConfig.WSHost == "" {
+				stackConfig.WSHost = "127.0.0.1"
+			}
+			if stackConfig.WSPort == 0 {
+				stackConfig.WSPort = 18546 // Default comparison mode port
+			}
+			stackConfig.WSModules = append(stackConfig.WSModules, execution.RPCNamespace)
+			execConfig.RPCServer.Enable = true
+			execConfig.RPCServer.Public = true
+			execConfig.RPCServer.Authenticated = false
+
+			// Use the self-exposed websocket URL as primary
+			primaryURL := fmt.Sprintf("ws://%s:%d", stackConfig.WSHost, stackConfig.WSPort)
+			nodeConfig.ExecutionRPCClient.URL = primaryURL
+			nodeConfig.ExecutionRPCClient.ConnectionWait = time.Second * 30
+		} else if config.PrimaryURL != "" {
+			// Fallback: use provided primary URL
+			nodeConfig.ExecutionRPCClient.URL = config.PrimaryURL
+		}
+		nodeConfig.ComparisonExecution.Enable = true
+		nodeConfig.ComparisonExecution.UseInternalSequencer = true // Enable sequencer mode with comparison
+		nodeConfig.ComparisonExecution.SecondaryRPCClient.URL = config.SecondaryURL
+		nodeConfig.ComparisonExecution.SecondaryRPCClient.ConnectionWait = time.Second * 30
+	}
+}
+
+// SkipIfExternalExecution skips tests incompatible with external EL
+func SkipIfExternalExecution(t *testing.T) {
+	mode := getExecutionMode()
+	if isExternalExecutionMode(mode) {
+		t.Skipf("Test not compatible with %s execution mode", mode)
+	}
+}
+
+// RequireInternalExecution fails if not in internal mode
+func RequireInternalExecution(t *testing.T) {
+	mode := getExecutionMode()
+	if mode != ExecutionModeInternal {
+		t.Fatalf("Test requires internal execution mode, got: %s", mode)
+	}
+}
+
+// WaitForExternalEL waits for external EL to be ready
+func WaitForExternalEL(t *testing.T, url string, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		client, err := rpc.Dial(url)
+		if err == nil {
+			client.Close()
+			return
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	t.Fatalf("External EL at %s not ready after %v", url, timeout)
+}
 
 type info = *BlockchainTestInfo
 
@@ -410,6 +553,23 @@ func (b *NodeBuilder) DefaultConfig(t *testing.T, withL1 bool) *NodeBuilder {
 	b.execConfig = ExecConfigDefaultTest(t, b.defaultStateScheme)
 	b.l3Config = L3NitroConfigDefaultTest(t)
 
+	// Apply execution mode if configured via environment variables or flags
+	config := getExecutionConfig()
+	if config.Mode != ExecutionModeInternal {
+		applyExecutionMode(b.nodeConfig, b.execConfig, b.l2StackConfig, config)
+		if isExternalExecutionMode(config.Mode) {
+			// Disable parallelization for external/comparison modes
+			// Tests share a single external EL instance and must run sequentially
+			b.parallelise = false
+			t.Logf("Execution mode: %s (primary: %s, sequential)", config.Mode, config.PrimaryURL)
+			if config.Mode == ExecutionModeComparison {
+				t.Logf("Comparison mode secondary: %s", config.SecondaryURL)
+			}
+		} else {
+			t.Logf("Execution mode: %s", config.Mode)
+		}
+	}
+
 	return b
 }
 
@@ -445,6 +605,28 @@ func configureConsensusExecutionOverRPC(execConfig *gethexec.Config, nodeConfig 
 	execConfig.RPCServer.Public = true
 	execConfig.RPCServer.Authenticated = false
 	execConfig.ConsensusRPCClient.URL = "self"
+}
+
+// WithExecutionMode explicitly sets execution mode (overrides env vars)
+func (b *NodeBuilder) WithExecutionMode(mode ExecutionMode) *NodeBuilder {
+	config := getExecutionConfig()
+	config.Mode = mode
+	applyExecutionMode(b.nodeConfig, b.execConfig, b.l2StackConfig, config)
+	return b
+}
+
+// WithExternalExecution configures external EL with custom URL
+func (b *NodeBuilder) WithExternalExecution(primaryURL string) *NodeBuilder {
+	b.nodeConfig.ExecutionRPCClient.URL = primaryURL
+	return b
+}
+
+// WithComparisonExecution configures comparison mode with dual ELs
+func (b *NodeBuilder) WithComparisonExecution(primaryURL, secondaryURL string) *NodeBuilder {
+	b.nodeConfig.ExecutionRPCClient.URL = primaryURL
+	b.nodeConfig.ComparisonExecution.Enable = true
+	b.nodeConfig.ComparisonExecution.SecondaryRPCClient.URL = secondaryURL
+	return b
 }
 
 func (b *NodeBuilder) WithArbOSVersion(arbosVersion uint64) *NodeBuilder {
@@ -923,6 +1105,43 @@ func (b *NodeBuilder) BuildL2OnL1(t *testing.T) func() {
 		b.TrieNoAsyncFlush,
 	)
 
+	// If in comparison mode with UseInternalSequencer, forward the init message to secondary
+	if comparisonClient, ok := b.L2.ConsensusNode.ExecutionClient.(*comparisonrpcclient.ComparisonClient); ok {
+		// Get expected result from primary only (not through comparison, since secondary isn't initialized yet)
+		expectedResult, err := comparisonClient.PrimaryResultAtMessageIndex(0).Await(b.ctx)
+		Require(t, err, "Failed to get init result from primary")
+
+		// Debug: Log the init message content
+		t.Logf("BuildL2OnL1: Init message from L1 deployment:")
+		t.Logf("  ChainId: %s", b.initMessage.ChainId.String())
+		t.Logf("  InitialL1BaseFee: %s", b.initMessage.InitialL1BaseFee.String())
+		t.Logf("  SerializedChainConfig: %s", string(b.initMessage.SerializedChainConfig))
+		t.Logf("  Expected BlockHash from geth: %s", expectedResult.BlockHash.Hex())
+
+		// Use the REAL init message from L1 deployment (b.initMessage) instead of reconstructing
+		// This ensures Nethermind gets the exact same init message that geth used
+		// Format: chainId(32) + version(1) + basefee(32) + serializedChainConfig
+		// Version 1 includes the basefee; version 0 uses default
+		chainIdBytes := arbmath.U256Bytes(b.initMessage.ChainId)
+		baseFeeBytes := arbmath.U256Bytes(b.initMessage.InitialL1BaseFee)
+		l2msg := append(chainIdBytes, 1) // version 1
+		l2msg = append(l2msg, baseFeeBytes...)
+		l2msg = append(l2msg, b.initMessage.SerializedChainConfig...)
+		initMsg := &arbostypes.MessageWithMetadata{
+			Message: &arbostypes.L1IncomingMessage{
+				Header: &arbostypes.L1IncomingMessageHeader{
+					Kind:      arbostypes.L1MessageType_Initialize,
+					RequestId: &common.Hash{},
+					L1BaseFee: b.initMessage.InitialL1BaseFee,
+				},
+				L2msg: l2msg,
+			},
+			DelayedMessagesRead: 1,
+		}
+		_, err = comparisonClient.ForwardInitToSecondary(initMsg, expectedResult).Await(b.ctx)
+		Require(t, err, "Init message comparison failed")
+	}
+
 	_, hasOwnerAccount := b.L2Info.Accounts["Owner"]
 	if b.takeOwnership && hasOwnerAccount {
 		debugAuth := b.L2Info.GetDefaultTransactOpts("Owner", b.ctx)
@@ -1009,6 +1228,33 @@ func (b *NodeBuilder) BuildL2(t *testing.T) func() {
 
 	cleanup, err := execution_consensus.InitAndStartExecutionAndConsensusNodes(b.ctx, b.L2.Stack, execNode, b.L2.ConsensusNode)
 	Require(t, err)
+
+	// If in comparison mode with UseInternalSequencer, forward the init message to secondary
+	if comparisonClient, ok := b.L2.ConsensusNode.ExecutionClient.(*comparisonrpcclient.ComparisonClient); ok {
+		// Get expected result from primary only (not through comparison, since secondary isn't initialized yet)
+		expectedResult, err := comparisonClient.PrimaryResultAtMessageIndex(0).Await(b.ctx)
+		Require(t, err, "Failed to get init result from primary")
+
+		// Reconstruct the init message (same logic as AddFakeInitMessage)
+		// IMPORTANT: Use non-zero L1BaseFee for secondary EL (Nethermind requires it)
+		chainConfigJson, err := json.Marshal(b.chainConfig)
+		Require(t, err)
+		chainIdBytes := arbmath.U256Bytes(b.chainConfig.ChainID)
+		l2msg := append(append(chainIdBytes, 0), chainConfigJson...)
+		initMsg := &arbostypes.MessageWithMetadata{
+			Message: &arbostypes.L1IncomingMessage{
+				Header: &arbostypes.L1IncomingMessageHeader{
+					Kind:      arbostypes.L1MessageType_Initialize,
+					RequestId: &common.Hash{},
+					L1BaseFee: common.Big0,
+				},
+				L2msg: l2msg,
+			},
+			DelayedMessagesRead: 1,
+		}
+		_, err = comparisonClient.ForwardInitToSecondary(initMsg, expectedResult).Await(b.ctx)
+		Require(t, err, "Init message comparison failed")
+	}
 
 	b.L2.Client = ClientForStack(t, b.L2.Stack, clientForStackUseHTTP(b.l2StackConfig))
 
@@ -1142,6 +1388,16 @@ func build2ndNode(
 	}
 	if *testflag.ConsensusExecutionInSameProcessUseRPC {
 		configureConsensusExecutionOverRPC(params.execConfig, params.nodeConfig, params.stackConfig)
+	}
+
+	// Apply execution mode if configured via environment and not already explicitly set
+	execConfig := getExecutionConfig()
+	if params.nodeConfig.ExecutionRPCClient.URL == "" && execConfig.Mode != ExecutionModeInternal {
+		applyExecutionMode(params.nodeConfig, params.execConfig, params.stackConfig, execConfig)
+		// For external modes, set useExecutionClientOnly flag
+		if isExternalExecutionMode(execConfig.Mode) {
+			params.useExecutionClientOnly = true
+		}
 	}
 
 	var cleanup func()
@@ -2056,6 +2312,19 @@ func ClientForStack(t *testing.T, backend *node.Node, useHTTP bool) *ethclient.C
 	return ethclient.NewClient(backend.Attach())
 }
 
+// isExternalExecutionURL returns true if the URL points to an external execution layer
+// (not empty, "self", or "self-auth" which are local/loopback modes)
+func isExternalExecutionURL(url string) bool {
+	return url != "" && url != "self" && url != "self-auth"
+}
+
+// ClientForURL creates an ethclient connected to the given RPC URL
+func ClientForURL(t *testing.T, ctx context.Context, url string) *ethclient.Client {
+	rpcClient, err := rpc.DialContext(ctx, url)
+	Require(t, err)
+	return ethclient.NewClient(rpcClient)
+}
+
 func StartWatchChanErr(t *testing.T, ctx context.Context, feedErrChan chan error, node *arbnode.Node) {
 	go func() {
 		select {
@@ -2112,6 +2381,10 @@ func Create2ndNodeWithConfig(
 	}
 	Require(t, execConfig.Validate())
 
+	// Determine if using external execution RPC
+	externalExecURL := nodeConfig.ExecutionRPCClient.URL
+	isExternalExec := isExternalExecutionURL(externalExecURL)
+
 	feedErrChan := make(chan error, 10)
 	parentChainRpcClient := parentChainStack.Attach()
 	parentChainClient := ethclient.NewClient(parentChainRpcClient)
@@ -2159,8 +2432,13 @@ func Create2ndNodeWithConfig(
 	AddValNodeIfNeeded(t, ctx, nodeConfig, true, "", valnodeConfig.Wasm.RootPath)
 
 	execConfigFetcher := NewCommonConfigFetcher(execConfig)
-	currentExec, err := gethexec.CreateExecutionNode(ctx, chainStack, executionDB, blockchain, parentChainClient, execConfigFetcher, big.NewInt(1337), 0)
-	Require(t, err)
+	var currentExec *gethexec.ExecutionNode
+	if !isExternalExec {
+		// Local or "self" mode - create local execution node
+		currentExec, err = gethexec.CreateExecutionNode(ctx, chainStack, executionDB, blockchain, parentChainClient, execConfigFetcher, big.NewInt(1337), 0)
+		Require(t, err)
+	}
+	// External mode: skip local EL creation - InitAndStartExecutionAndConsensusNodes handles nil
 
 	var currentNode *arbnode.Node
 	locator, err := server_common.NewMachineLocator(valnodeConfig.Wasm.RootPath)
@@ -2176,7 +2454,15 @@ func Create2ndNodeWithConfig(
 
 	cleanup, err := execution_consensus.InitAndStartExecutionAndConsensusNodes(ctx, chainStack, currentExec, currentNode)
 	Require(t, err)
-	chainClient := ClientForStack(t, chainStack, clientForStackUseHTTP(stackConfig))
+
+	var chainClient *ethclient.Client
+	if isExternalExec {
+		// Connect to external EL via WebSocket/HTTP
+		chainClient = ClientForURL(t, ctx, externalExecURL)
+	} else {
+		// Use in-process connection to local stack
+		chainClient = ClientForStack(t, chainStack, clientForStackUseHTTP(stackConfig))
+	}
 
 	StartWatchChanErr(t, ctx, feedErrChan, currentNode)
 
