@@ -19,7 +19,6 @@ import (
 	"github.com/offchainlabs/nitro/arbutil"
 	"github.com/offchainlabs/nitro/execution"
 	executionrpcclient "github.com/offchainlabs/nitro/execution/rpcclient"
-	"github.com/offchainlabs/nitro/util"
 	"github.com/offchainlabs/nitro/util/containers"
 )
 
@@ -197,39 +196,22 @@ func (c *Comparator) CompareMessageResult(
 	primary, secondary containers.PromiseInterface[*execution.MessageResult],
 ) containers.PromiseInterface[*execution.MessageResult] {
 	return containers.DoPromise(ctx, func(ctx context.Context) (*execution.MessageResult, error) {
-		util.DLog(fmt.Sprintf("CompareMessageResult ENTRY method=%s msgIdx=%d", method, msgIdx))
 		primaryResult, primaryErr := primary.Await(ctx)
 		secondaryResult, secondaryErr := secondary.Await(ctx)
 
 		// Compare response headers (X-Arb-*)
 		c.compareResponseHeaders(method, &msgIdx)
 
-		if primaryResult != nil && secondaryResult != nil {
-			util.DLog(fmt.Sprintf("Results received msgIdx=%d primaryHash=%s secondaryHash=%s primaryErr=%v secondaryErr=%v",
-				msgIdx, primaryResult.BlockHash, secondaryResult.BlockHash, primaryErr, secondaryErr))
-		} else {
-			util.DLog(fmt.Sprintf("Results received msgIdx=%d primaryResult=%v secondaryResult=%v primaryErr=%v secondaryErr=%v",
-				msgIdx, primaryResult != nil, secondaryResult != nil, primaryErr, secondaryErr))
-		}
-
 		if err := compareErrors(primaryErr, secondaryErr); err != nil {
-			util.DLog(fmt.Sprintf("Error mismatch msgIdx=%d", msgIdx))
 			printMismatch(MismatchReport{Method: method, MsgIdx: &msgIdx, Diff: err, PrimaryErr: primaryErr, SecondaryErr: secondaryErr}, c.fatalErrChan)
 		}
 
 		if primaryErr == nil && secondaryErr == nil {
-			if primaryResult != nil && secondaryResult != nil {
-				util.DLog(fmt.Sprintf("Comparing results msgIdx=%d primaryBlockHash=%s secondaryBlockHash=%s primarySendRoot=%s secondarySendRoot=%s",
-					msgIdx, primaryResult.BlockHash, secondaryResult.BlockHash, primaryResult.SendRoot, secondaryResult.SendRoot))
-			}
 			if err := compare(primaryResult, secondaryResult); err != nil {
-				util.DLog(fmt.Sprintf("MISMATCH DETECTED msgIdx=%d", msgIdx))
 				report := MismatchReport{Method: method, MsgIdx: &msgIdx, Diff: err}
 				printMismatchReport(report)
 				c.compareBlock(ctx, primaryResult, secondaryResult, msgIdx)
 				sendFatalError(report, c.fatalErrChan)
-			} else {
-				util.DLog(fmt.Sprintf("Results MATCH msgIdx=%d", msgIdx))
 			}
 		}
 
