@@ -134,6 +134,9 @@ func (c *Comparator) CompareWithExpected(
 		printMismatchReport(report)
 		c.compareBlock(ctx, expectedResult, secondaryResult, msgIdx)
 		sendFatalError(report, c.fatalErrChan)
+	} else {
+		// Log successful comparison
+		log.Info("Comparison PASSED", "method", method, "msgIdx", msgIdx, "blockHash", expectedResult.BlockHash)
 	}
 
 	return expectedResult, nil
@@ -160,6 +163,9 @@ func (c *Comparator) CompareMessageResult(
 				printMismatchReport(report)
 				c.compareBlock(ctx, primaryResult, secondaryResult, msgIdx)
 				sendFatalError(report, c.fatalErrChan)
+			} else {
+				// Log successful comparison
+				log.Info("Comparison PASSED", "method", method, "msgIdx", msgIdx, "blockHash", primaryResult.BlockHash)
 			}
 		}
 
@@ -199,6 +205,9 @@ func (c *Comparator) CompareMessageResults(
 				}
 
 				sendFatalError(report, c.fatalErrChan)
+			} else {
+				// Log successful batch comparison
+				log.Info("Comparison PASSED (batch)", "method", method, "msgIdxStart", msgIdxStart, "count", len(primaryResults))
 			}
 		}
 
