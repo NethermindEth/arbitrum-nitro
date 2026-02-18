@@ -191,20 +191,21 @@ func applyExecutionMode(nodeConfig *arbnode.Config, execConfig *gethexec.Config,
 		// This allows the test node to act as both sequencer AND primary EL for comparison
 		if execConfig != nil && stackConfig != nil {
 			// Configure the node to expose its EL via websocket
+			// WSPort = 0 allows OS to assign an ephemeral port, avoiding TIME_WAIT conflicts
+			// in parallel test execution. The actual port is resolved via stack.WSEndpoint()
+			// when the RpcClient starts with URL = "self".
 			if stackConfig.WSHost == "" {
 				stackConfig.WSHost = "127.0.0.1"
 			}
-			if stackConfig.WSPort == 0 {
-				stackConfig.WSPort = 18546 // Default comparison mode port
-			}
+			// Keep WSPort = 0 for dynamic allocation (no explicit port assignment)
 			stackConfig.WSModules = append(stackConfig.WSModules, execution.RPCNamespace)
 			execConfig.RPCServer.Enable = true
 			execConfig.RPCServer.Public = true
 			execConfig.RPCServer.Authenticated = false
 
-			// Use the self-exposed websocket URL as primary
-			primaryURL := fmt.Sprintf("ws://%s:%d", stackConfig.WSHost, stackConfig.WSPort)
-			nodeConfig.ExecutionRPCClient.URL = primaryURL
+			// Use "self" to resolve the actual WebSocket endpoint after the stack starts
+			// This avoids race conditions from "find port, close, reopen" patterns
+			nodeConfig.ExecutionRPCClient.URL = "self"
 			nodeConfig.ExecutionRPCClient.ConnectionWait = time.Second * 30
 		} else if config.PrimaryURL != "" {
 			// Fallback: use provided primary URL

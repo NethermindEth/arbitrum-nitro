@@ -133,8 +133,11 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("error validating Client config: %w", err)
 	}
 	if c.ComparisonExecution.Enable {
-		if c.ExecutionRPCClient.URL == "" || c.ExecutionRPCClient.URL == "self" || c.ExecutionRPCClient.URL == "self-auth" {
-			return errors.New("comparison execution requires primary execution-rpc-client.url to be an external RPC URL (not empty, 'self', or 'self-auth')")
+		// Allow "self" and "self-auth" for comparison mode - they resolve to stack.WSEndpoint()
+		// which provides an external WebSocket connection to the internal geth.
+		// Only reject empty URL which would use internal IPC (not suitable for comparison).
+		if c.ExecutionRPCClient.URL == "" {
+			return errors.New("comparison execution requires primary execution-rpc-client.url to be set (use 'self' for internal geth via WebSocket)")
 		}
 		if c.ComparisonExecution.SecondaryRPCClient.URL == "" {
 			return errors.New("comparison execution requires secondary-rpc-client.url to be set")
