@@ -86,12 +86,17 @@ func compareErrors(primary, secondary error) error {
 	if primary == nil && secondary == nil {
 		return nil
 	}
-	// If primary succeeded but secondary failed due to context cancellation,
-	// this is a race condition during test shutdown - not a real mismatch
+	// Context cancellation during shutdown can cause asymmetric error states.
+	// Either side may cancel first, so ignore both directions:
+	// - primary=nil, secondary=context canceled
+	// - primary=context canceled, secondary=nil
+	// - primary=context canceled, secondary=context canceled
 	if primary == nil && isContextCanceledError(secondary) {
 		return nil
 	}
-	// If both errors are context cancellation, also not a mismatch
+	if isContextCanceledError(primary) && secondary == nil {
+		return nil
+	}
 	if isContextCanceledError(primary) && isContextCanceledError(secondary) {
 		return nil
 	}
