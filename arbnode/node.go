@@ -1487,10 +1487,6 @@ func CreateConsensusNode(
 			arbOSVersionGetter = rpcClient
 		}
 		// executionSequencer intentionally left nil - RPC client does not implement ExecutionSequencer
-		rpcClient := executionrpcclient.NewClient(execConfigFetcher, stack)
-		executionClient = rpcClient
-		executionRecorder = rpcClient
-		arbOSVersionGetter = rpcClient
 	} else {
 		executionClient = fullExecutionClient
 		executionRecorder = fullExecutionClient

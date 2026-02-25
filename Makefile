@@ -187,6 +187,8 @@ ifeq ($(NETWORK),sepolia)
   L1_RPC ?= wss://sepolia.drpc.org
   L1_BEACON ?= https://ethereum-sepolia-beacon-api.publicnode.com
   GENESIS_HASH := 0x77194da4010e549a7028a9c3c51c3e277823be6ac7d138d0bb8a70197b5c004c
+  # Sepolia doesn't have a genesis snapshot, initialize from L1 directly
+  INIT_LATEST_FLAG :=
 endif
 
 # Mainnet configuration
@@ -196,6 +198,8 @@ ifeq ($(NETWORK),mainnet)
   L1_RPC ?= wss://ethereum.drpc.org
   L1_BEACON ?= https://ethereum-beacon-api.publicnode.com
   GENESIS_HASH := 0x7ee576b35482195fc49205cec9af72ce14f003b9ae69f6ba0faef4514be8b442
+  # Mainnet uses genesis snapshot from snapshot.arbitrum.foundation
+  INIT_LATEST_FLAG := --init.latest=genesis
 endif
 
 .PHONY: clean-el-db
@@ -227,7 +231,7 @@ init-el: $(output_root)/bin/nitro ## Initialize EL with genesis from L1 (then qu
 		--persistent.global-config=$(NITRO_EL_DB) \
 		--parent-chain.connection.url=$(L1_RPC) \
 		--parent-chain.blob-client.beacon-url=$(L1_BEACON) \
-		--init.latest=genesis \
+		$(INIT_LATEST_FLAG) \
 		--init.then-quit=true \
 		--init.validate-genesis-assertion=false \
 		--node.sequencer=false \
