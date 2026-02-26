@@ -43,6 +43,12 @@ func (c *Client) StopAndWait() {
 	c.StopWaiter.StopAndWait()
 }
 
+// CapturedHeaders returns the captured response headers if header capture is enabled.
+// Returns nil if header capture is not enabled.
+func (c *Client) CapturedHeaders() *rpcclient.CapturedHeaders {
+	return c.client.CapturedHeaders()
+}
+
 func convertError(err error) error {
 	if err == nil {
 		return nil

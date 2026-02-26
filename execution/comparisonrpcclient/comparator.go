@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"math/big"
 	"os"
+	"sort"
+	"strings"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -43,17 +45,64 @@ var cmpOptions = cmp.Options{
 
 // Comparator handles comparison of execution results between primary and secondary clients
 type Comparator struct {
-	fatalErrChan chan<- error
-	primary      *executionrpcclient.Client
-	secondary    *executionrpcclient.Client
+	fatalErrChan   chan<- error
+	primary        *executionrpcclient.Client
+	secondary      *executionrpcclient.Client
+	compareHeaders bool // Whether to compare response headers
 }
 
 // NewComparator creates a new Comparator
 func NewComparator(fatalErrChan chan<- error, primary, secondary *executionrpcclient.Client) *Comparator {
 	return &Comparator{
-		fatalErrChan: fatalErrChan,
-		primary:      primary,
-		secondary:    secondary,
+		fatalErrChan:   fatalErrChan,
+		primary:        primary,
+		secondary:      secondary,
+		compareHeaders: primary.CapturedHeaders() != nil && secondary.CapturedHeaders() != nil,
+	}
+}
+
+// compareResponseHeaders compares the captured X-Arb-* headers from both clients.
+// Returns an error if there are mismatches.
+func (c *Comparator) compareResponseHeaders(method string, msgIdx *arbutil.MessageIndex) {
+	if !c.compareHeaders {
+		return
+	}
+
+	primaryHeaders := c.primary.CapturedHeaders().All()
+	secondaryHeaders := c.secondary.CapturedHeaders().All()
+
+	// Build diff
+	var diffs []string
+
+	// Check primary headers against secondary
+	for key, primaryVal := range primaryHeaders {
+		secondaryVal, exists := secondaryHeaders[key]
+		if !exists {
+			diffs = append(diffs, fmt.Sprintf("  header %s present in primary (%s) but missing in secondary", key, primaryVal))
+		} else if primaryVal != secondaryVal {
+			diffs = append(diffs, fmt.Sprintf("  header %s: primary=%s, secondary=%s", key, primaryVal, secondaryVal))
+		}
+	}
+
+	// Check for headers in secondary but not primary
+	for key, secondaryVal := range secondaryHeaders {
+		if _, exists := primaryHeaders[key]; !exists {
+			diffs = append(diffs, fmt.Sprintf("  header %s present in secondary (%s) but missing in primary", key, secondaryVal))
+		}
+	}
+
+	if len(diffs) > 0 {
+		sort.Strings(diffs)
+		diffErr := errors.New(strings.Join(diffs, "\n"))
+		report := MismatchReport{
+			Method: method + " (response headers)",
+			MsgIdx: msgIdx,
+			Diff:   diffErr,
+		}
+		printMismatchReport(report)
+		// Note: header mismatches are logged but don't trigger a fatal error
+		// since the primary result is still returned
+		log.Warn("Response header mismatch detected", "method", method, "diffs", len(diffs))
 	}
 }
 
@@ -92,6 +141,9 @@ func (c *Comparator) CompareMessageResult(
 		primaryResult, primaryErr := primary.Await(ctx)
 		secondaryResult, secondaryErr := secondary.Await(ctx)
 
+		// Compare response headers (X-Arb-*)
+		c.compareResponseHeaders(method, &msgIdx)
+
 		if err := compareErrors(primaryErr, secondaryErr); err != nil {
 			printMismatch(MismatchReport{Method: method, MsgIdx: &msgIdx, Diff: err, PrimaryErr: primaryErr, SecondaryErr: secondaryErr}, c.fatalErrChan)
 		}
@@ -119,6 +171,9 @@ func (c *Comparator) CompareMessageResults(
 	return containers.DoPromise(ctx, func(ctx context.Context) ([]*execution.MessageResult, error) {
 		primaryResults, primaryErr := primary.Await(ctx)
 		secondaryResults, secondaryErr := secondary.Await(ctx)
+
+		// Compare response headers (X-Arb-*)
+		c.compareResponseHeaders(method, &msgIdxStart)
 
 		if err := compareErrors(primaryErr, secondaryErr); err != nil {
 			printMismatch(MismatchReport{Method: method, MsgIdx: &msgIdxStart, Diff: err, PrimaryErr: primaryErr, SecondaryErr: secondaryErr}, c.fatalErrChan)

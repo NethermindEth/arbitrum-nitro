@@ -135,6 +135,7 @@ type Config struct {
 	BlockMetadataApiBlocksLimit uint64                 `koanf:"block-metadata-api-blocks-limit"`
 	VmTrace                     LiveTracingConfig      `koanf:"vmtrace"`
 	ExposeMultiGas              bool                   `koanf:"expose-multi-gas"`
+	ExposeMetadataHeaders       bool                   `koanf:"expose-metadata-headers"`
 	RPCServer                   rpcserver.Config       `koanf:"rpc-server"`
 	ConsensusRPCClient          rpcclient.ClientConfig `koanf:"consensus-rpc-client" reload:"hot"`
 
@@ -188,6 +189,7 @@ func ConfigAddOptions(prefix string, f *pflag.FlagSet) {
 	f.Uint64(prefix+".block-metadata-api-cache-size", ConfigDefault.BlockMetadataApiCacheSize, "size (in bytes) of lru cache storing the blockMetadata to service arb_getRawBlockMetadata")
 	f.Uint64(prefix+".block-metadata-api-blocks-limit", ConfigDefault.BlockMetadataApiBlocksLimit, "maximum number of blocks allowed to be queried for blockMetadata per arb_getRawBlockMetadata query. Enabled by default, set 0 to disable the limit")
 	f.Bool(prefix+".expose-multi-gas", false, "experimental: expose multi-dimensional gas in transaction receipts")
+	f.Bool(prefix+".expose-metadata-headers", false, "expose block metadata (GasUsed) via HTTP response headers for comparison testing")
 	LiveTracingConfigAddOptions(prefix+".vmtrace", f)
 	rpcserver.ConfigAddOptions(prefix+".rpc-server", "execution", f)
 	rpcclient.RPCClientAddOptions(prefix+".consensus-rpc-client", f, &ConfigDefault.ConsensusRPCClient)
@@ -276,7 +278,7 @@ func CreateExecutionNode(
 ) (*ExecutionNode, error) {
 	config := configFetcher.Get()
 
-	execEngine := NewExecutionEngine(l2BlockChain, syncTillBlock, config.ExposeMultiGas)
+	execEngine := NewExecutionEngine(l2BlockChain, syncTillBlock, config.ExposeMultiGas, config.ExposeMetadataHeaders)
 	if config.EnablePrefetchBlock {
 		execEngine.EnablePrefetchBlock()
 	}

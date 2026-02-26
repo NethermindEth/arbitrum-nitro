@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"regexp"
 	"strings"
 	"sync/atomic"
@@ -33,6 +34,7 @@ type ClientConfig struct {
 	RetryErrors               string        `json:"retry-errors,omitempty" koanf:"retry-errors"`
 	RetryDelay                time.Duration `json:"retry-delay,omitempty" koanf:"retry-delay"`
 	WebsocketMessageSizeLimit int64         `json:"websocket-message-size-limit,omitempty" koanf:"websocket-message-size-limit"`
+	CaptureHeaders            bool          `json:"capture-headers,omitempty" koanf:"capture-headers"`
 
 	retryErrors *regexp.Regexp
 }
@@ -82,13 +84,15 @@ func RPCClientAddOptions(prefix string, f *pflag.FlagSet, defaultConfig *ClientC
 	f.String(prefix+".retry-errors", defaultConfig.RetryErrors, "Errors matching this regular expression are automatically retried")
 	f.Duration(prefix+".retry-delay", defaultConfig.RetryDelay, "delay between retries")
 	f.Int64(prefix+".websocket-message-size-limit", defaultConfig.WebsocketMessageSizeLimit, "websocket message size limit used by the RPC client. 0 means no limit")
+	f.Bool(prefix+".capture-headers", defaultConfig.CaptureHeaders, "capture X-Arb-* response headers for comparison (requires HTTP, not WebSocket)")
 }
 
 type RpcClient struct {
-	config    ClientConfigFetcher
-	client    *rpc.Client
-	autoStack *node.Node
-	logId     atomic.Uint64
+	config          ClientConfigFetcher
+	client          *rpc.Client
+	autoStack       *node.Node
+	logId           atomic.Uint64
+	capturedHeaders *CapturedHeaders // non-nil when header capture is enabled
 }
 
 func NewRpcClient(config ClientConfigFetcher, stack *node.Node) *RpcClient {
@@ -100,6 +104,12 @@ func NewRpcClient(config ClientConfigFetcher, stack *node.Node) *RpcClient {
 
 func (c *RpcClient) Timeout() time.Duration {
 	return c.config().Timeout
+}
+
+// CapturedHeaders returns the captured response headers if header capture is enabled.
+// Returns nil if header capture is not enabled.
+func (c *RpcClient) CapturedHeaders() *CapturedHeaders {
+	return c.capturedHeaders
 }
 
 func (c *RpcClient) Close() {
@@ -255,6 +265,22 @@ func (c *RpcClient) Start(ctx_in context.Context) error {
 			return err
 		}
 	}
+
+	// Build dial options
+	var dialOptions []rpc.ClientOption
+	dialOptions = append(dialOptions, rpc.WithWebsocketMessageSizeLimit(c.config().WebsocketMessageSizeLimit))
+	if jwt != nil {
+		dialOptions = append(dialOptions, rpc.WithHTTPAuth(node.NewJWTAuth([32]byte(*jwt))))
+	}
+
+	// Add header capture transport if enabled (requires HTTP, not WebSocket)
+	if c.config().CaptureHeaders {
+		captureTransport := NewHeaderCaptureTransport(http.DefaultTransport)
+		c.capturedHeaders = captureTransport.Captured
+		httpClient := &http.Client{Transport: captureTransport}
+		dialOptions = append(dialOptions, rpc.WithHTTPClient(httpClient))
+	}
+
 	connTimeout := time.After(c.config().ConnectionWait)
 	for {
 		var ctx context.Context
@@ -267,11 +293,7 @@ func (c *RpcClient) Start(ctx_in context.Context) error {
 		}
 		var err error
 		var client *rpc.Client
-		if jwt == nil {
-			client, err = rpc.DialOptions(ctx, url, rpc.WithWebsocketMessageSizeLimit(c.config().WebsocketMessageSizeLimit))
-		} else {
-			client, err = rpc.DialOptions(ctx, url, rpc.WithHTTPAuth(node.NewJWTAuth([32]byte(*jwt))), rpc.WithWebsocketMessageSizeLimit(c.config().WebsocketMessageSizeLimit))
-		}
+		client, err = rpc.DialOptions(ctx, url, dialOptions...)
 		cancelCtx()
 		if err == nil {
 			c.client = client

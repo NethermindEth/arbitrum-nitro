@@ -21,6 +21,7 @@ import (
 	"path"
 	"runtime/pprof"
 	"runtime/trace"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -38,6 +39,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
+	"github.com/ethereum/go-ethereum/node"
 	"github.com/ethereum/go-ethereum/params"
 
 	"github.com/offchainlabs/nitro/arbos"
@@ -50,6 +52,7 @@ import (
 	"github.com/offchainlabs/nitro/consensus"
 	"github.com/offchainlabs/nitro/execution"
 	"github.com/offchainlabs/nitro/execution/gethexec/eventfilter"
+	"github.com/offchainlabs/nitro/execution/rpccontext"
 	"github.com/offchainlabs/nitro/util/arbmath"
 	"github.com/offchainlabs/nitro/util/containers"
 	"github.com/offchainlabs/nitro/util/sharedmetrics"
@@ -211,7 +214,8 @@ type ExecutionEngine struct {
 
 	syncTillBlock uint64
 
-	exposeMultiGas bool
+	exposeMultiGas        bool
+	exposeMetadataHeaders bool
 
 	runningMaintenance atomic.Bool
 
@@ -233,14 +237,15 @@ func init() {
 	}
 }
 
-func NewExecutionEngine(bc *core.BlockChain, syncTillBlock uint64, exposeMultiGas bool) *ExecutionEngine {
+func NewExecutionEngine(bc *core.BlockChain, syncTillBlock uint64, exposeMultiGas bool, exposeMetadataHeaders bool) *ExecutionEngine {
 	return &ExecutionEngine{
-		bc:                bc,
-		resequenceChan:    make(chan []*arbostypes.MessageWithMetadata),
-		newBlockNotifier:  make(chan struct{}, 1),
-		cachedL1PriceData: NewL1PriceData(),
-		exposeMultiGas:    exposeMultiGas,
-		syncTillBlock:     syncTillBlock,
+		bc:                    bc,
+		resequenceChan:        make(chan []*arbostypes.MessageWithMetadata),
+		newBlockNotifier:      make(chan struct{}, 1),
+		cachedL1PriceData:     NewL1PriceData(),
+		exposeMultiGas:        exposeMultiGas,
+		exposeMetadataHeaders: exposeMetadataHeaders,
+		syncTillBlock:         syncTillBlock,
 	}
 }
 
@@ -978,11 +983,22 @@ func (s *ExecutionEngine) appendBlock(block *types.Block, statedb *state.StateDB
 	return nil
 }
 
+// HeaderGasUsed is the HTTP header name for exposing block gas usage.
+const HeaderGasUsed = "X-Arb-Gas-Used"
+
 func (s *ExecutionEngine) resultFromHeader(header *types.Header) (*execution.MessageResult, error) {
 	if header == nil {
 		return nil, ResultNotFound
 	}
 	info := types.DeserializeHeaderExtraInformation(header)
+
+	// Set HTTP header directly, like Nethermind's SetMetadataHeaders
+	if s.exposeMetadataHeaders {
+		if ctx := rpccontext.Current(); ctx != nil {
+			node.SetResponseHeader(ctx, HeaderGasUsed, strconv.FormatUint(header.GasUsed, 10))
+		}
+	}
+
 	return &execution.MessageResult{
 		BlockHash: header.Hash(),
 		SendRoot:  info.SendRoot,

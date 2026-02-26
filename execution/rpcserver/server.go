@@ -10,6 +10,7 @@ import (
 	"github.com/offchainlabs/nitro/arbos/arbostypes"
 	"github.com/offchainlabs/nitro/arbutil"
 	"github.com/offchainlabs/nitro/execution"
+	"github.com/offchainlabs/nitro/execution/rpccontext"
 )
 
 type Server struct {
@@ -22,10 +23,12 @@ func NewServer(executionClient execution.ExecutionClient, executionRecorder exec
 }
 
 func (c *Server) DigestMessage(ctx context.Context, msgIdx arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata, msgForPrefetch *arbostypes.MessageWithMetadata) (*execution.MessageResult, error) {
+	rpccontext.SetCurrent(ctx)
 	return c.executionClient.DigestMessage(msgIdx, msg, msgForPrefetch).Await(ctx)
 }
 
 func (c *Server) Reorg(ctx context.Context, msgIdxOfFirstMsgToAdd arbutil.MessageIndex, newMessages []arbostypes.MessageWithMetadataAndBlockInfo, oldMessages []*arbostypes.MessageWithMetadata) ([]*execution.MessageResult, error) {
+	rpccontext.SetCurrent(ctx)
 	return c.executionClient.Reorg(msgIdxOfFirstMsgToAdd, newMessages, oldMessages).Await(ctx)
 }
 
@@ -34,6 +37,7 @@ func (c *Server) HeadMessageIndex(ctx context.Context) (arbutil.MessageIndex, er
 }
 
 func (c *Server) ResultAtMessageIndex(ctx context.Context, msgIdx arbutil.MessageIndex) (*execution.MessageResult, error) {
+	rpccontext.SetCurrent(ctx)
 	return c.executionClient.ResultAtMessageIndex(msgIdx).Await(ctx)
 }
 
