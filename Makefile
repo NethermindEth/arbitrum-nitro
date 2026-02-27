@@ -1,10 +1,6 @@
 # Copyright 2021-2026, Offchain Labs, Inc.
 # For license information, see https://github.com/OffchainLabs/nitro/blob/master/LICENSE.md
 
-# Load environment variables from .env file if it exists
--include .env
-export
-
 # Docker builds mess up file timestamps. Then again, in docker builds we never
 # have to update an existing file. So - for docker, convert all dependencies
 # to order-only dependencies (timestamps ignored).
@@ -188,22 +184,18 @@ NETWORK ?= sepolia
 ifeq ($(NETWORK),sepolia)
   CHAIN_ID := 421614
   PARENT_CHAIN_ID := 11155111
-  L1_RPC ?= $(if $(SEPOLIA_L1_RPC),$(SEPOLIA_L1_RPC),wss://sepolia.drpc.org)
-  L1_BEACON ?= $(if $(SEPOLIA_L1_BEACON),$(SEPOLIA_L1_BEACON),https://ethereum-sepolia-beacon-api.publicnode.com)
+  L1_RPC ?= wss://sepolia.drpc.org
+  L1_BEACON ?= https://ethereum-sepolia-beacon-api.publicnode.com
   GENESIS_HASH := 0x77194da4010e549a7028a9c3c51c3e277823be6ac7d138d0bb8a70197b5c004c
-  # Sepolia doesn't have a genesis snapshot, initialize from L1 directly
-  INIT_LATEST_FLAG :=
 endif
 
 # Mainnet configuration
 ifeq ($(NETWORK),mainnet)
   CHAIN_ID := 42161
   PARENT_CHAIN_ID := 1
-  L1_RPC ?= $(if $(MAINNET_L1_RPC),$(MAINNET_L1_RPC),wss://ethereum.drpc.org)
-  L1_BEACON ?= $(if $(MAINNET_L1_BEACON),$(MAINNET_L1_BEACON),https://ethereum-beacon-api.publicnode.com)
+  L1_RPC ?= wss://ethereum.drpc.org
+  L1_BEACON ?= https://ethereum-beacon-api.publicnode.com
   GENESIS_HASH := 0x7ee576b35482195fc49205cec9af72ce14f003b9ae69f6ba0faef4514be8b442
-  # Mainnet uses genesis snapshot from snapshot.arbitrum.foundation
-  INIT_LATEST_FLAG := --init.latest=genesis
 endif
 
 .PHONY: clean-el-db
@@ -235,7 +227,7 @@ init-el: $(output_root)/bin/nitro ## Initialize EL with genesis from L1 (then qu
 		--persistent.global-config=$(NITRO_EL_DB) \
 		--parent-chain.connection.url=$(L1_RPC) \
 		--parent-chain.blob-client.beacon-url=$(L1_BEACON) \
-		$(INIT_LATEST_FLAG) \
+		--init.latest=genesis \
 		--init.then-quit=true \
 		--init.validate-genesis-assertion=false \
 		--node.sequencer=false \
@@ -439,90 +431,6 @@ run-cl-mainnet: $(output_root)/bin/nitro ## Run Mainnet CL connecting to EL
 .PHONY: run-cl-comparison-mainnet
 run-cl-comparison-mainnet: $(output_root)/bin/nitro ## Run Mainnet CL in comparison mode
 	@$(MAKE) run-cl-comparison NETWORK=mainnet NITRO_CL_DB=$(DATA_DIR)/nitro/mainnet/cl
-
-# ============================================================================
-# Benchmark Targets (ExposeGasUsedHeader enabled)
-# ============================================================================
-
-# Benchmark mode: HTTP only (required for header capture), no JWT auth
-# Ports: Nitro EL on 8547, Nethermind EL on 20551
-.PHONY: run-el-benchmark
-run-el-benchmark: $(output_root)/bin/nitro ## Run EL with benchmark mode (GasUsed header exposed)
-	@echo "Starting Nitro EL (BENCHMARK MODE)..."
-	@echo "  Chain ID: $(CHAIN_ID)"
-	@echo "  HTTP port: 8547"
-	@echo "  X-Arb-Gas-Used header enabled"
-	$(output_root)/bin/nitro \
-		--chain.id=$(CHAIN_ID) \
-		--parent-chain.id=$(PARENT_CHAIN_ID) \
-		--persistent.global-config=$(NITRO_EL_DB) \
-		--init.empty=true \
-		--init.validate-genesis-assertion=false \
-		--node.dangerous.no-l1-listener=true \
-		--node.parent-chain-reader.enable=false \
-		--node.sequencer=false \
-		--node.batch-poster.enable=false \
-		--node.staker.enable=false \
-		--node.feed.input.url="" \
-		--execution.rpc-server.enable=true \
-		--execution.rpc-server.public=true \
-		--execution.rpc-server.authenticated=false \
-		--execution.expose-metadata-headers=true \
-		--http.addr=0.0.0.0 \
-		--http.port=8547 \
-		--http.api=net,web3,eth,arb,nitroexecution
-
-.PHONY: run-el-sepolia-benchmark
-run-el-sepolia-benchmark: $(output_root)/bin/nitro ## Run Sepolia EL with benchmark mode
-	@$(MAKE) run-el-benchmark NETWORK=sepolia NITRO_EL_DB=$(DATA_DIR)/nitro/sepolia/el
-
-.PHONY: run-el-mainnet-benchmark
-run-el-mainnet-benchmark: $(output_root)/bin/nitro ## Run Mainnet EL with benchmark mode
-	@$(MAKE) run-el-benchmark NETWORK=mainnet NITRO_EL_DB=$(DATA_DIR)/nitro/mainnet/el
-
-# Comparison benchmark args - enables header capture on both primary and secondary clients
-COMPARISON_BENCHMARK_ARGS := \
-	--node.execution-rpc-client.capture-headers=true \
-	--node.comparison-execution.secondary-rpc-client.capture-headers=true
-
-.PHONY: run-cl-comparison-benchmark
-run-cl-comparison-benchmark: $(output_root)/bin/nitro ## Run CL in comparison mode with header comparison (benchmark)
-	@echo "Starting Nitro CL in COMPARISON BENCHMARK MODE for $(NETWORK)..."
-	@echo "  Chain ID: $(CHAIN_ID)"
-	@echo "  Primary EL (Nitro): http://localhost:8547"
-	@echo "  Secondary EL (Nethermind): http://localhost:20551"
-	@echo "  X-Arb-* headers will be captured and compared"
-	@rm -rf $(NITRO_CL_DB)/*
-	@mkdir -p $(NITRO_CL_DB)
-	$(output_root)/bin/nitro \
-		--chain.id=$(CHAIN_ID) \
-		--parent-chain.id=$(PARENT_CHAIN_ID) \
-		--persistent.global-config=$(NITRO_CL_DB) \
-		--parent-chain.connection.url=$(L1_RPC) \
-		--parent-chain.blob-client.beacon-url=$(L1_BEACON) \
-		--node.execution-rpc-client.url=http://localhost:8547 \
-		--node.comparison-execution.enable=true \
-		--node.comparison-execution.secondary-rpc-client.url=http://localhost:20551 \
-		--init.empty=true \
-		--init.validate-genesis-assertion=false \
-		--node.sequencer=false \
-		--node.batch-poster.enable=false \
-		--node.staker.enable=false \
-		--node.feed.input.url="" \
-		--auth.jwtsecret=$(JWT_SECRET) \
-		--ws.addr=0.0.0.0 \
-		--ws.port=8559 \
-		--http.addr=0.0.0.0 \
-		--http.port=8558 \
-		$(COMPARISON_BENCHMARK_ARGS)
-
-.PHONY: run-cl-comparison-benchmark-sepolia
-run-cl-comparison-benchmark-sepolia: $(output_root)/bin/nitro ## Run Sepolia CL comparison with header comparison
-	@$(MAKE) run-cl-comparison-benchmark NETWORK=sepolia NITRO_CL_DB=$(DATA_DIR)/nitro/sepolia/cl
-
-.PHONY: run-cl-comparison-benchmark-mainnet
-run-cl-comparison-benchmark-mainnet: $(output_root)/bin/nitro ## Run Mainnet CL comparison with header comparison
-	@$(MAKE) run-cl-comparison-benchmark NETWORK=mainnet NITRO_CL_DB=$(DATA_DIR)/nitro/mainnet/cl
 
 # ============================================================================
 # Snapshot Cache Management
