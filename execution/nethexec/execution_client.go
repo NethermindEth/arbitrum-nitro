@@ -247,7 +247,7 @@ func (p *nethermindExecutionClient) MarkValid(index arbutil.MessageIndex, result
 }
 
 func (p *nethermindExecutionClient) PrepareForRecord(ctx context.Context, start, end arbutil.MessageIndex) error {
-	return fmt.Errorf("PrepareForRecord not implemented")
+	return p.rpcClient.PrepareForRecord(context.Background(), start, end)
 }
 
 func (p *nethermindExecutionClient) ArbOSVersionForMessageIndex(msgIdx arbutil.MessageIndex) containers.PromiseInterface[uint64] {

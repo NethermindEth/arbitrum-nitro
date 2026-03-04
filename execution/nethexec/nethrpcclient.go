@@ -77,6 +77,11 @@ type recordBlockCreationResult struct {
 	UserWasms map[common.Hash]map[string]hexutil.Bytes `json:"userWasms,omitempty"`
 }
 
+type prepareForRecordParams struct {
+	Start arbutil.MessageIndex `json:"start"`
+	End   arbutil.MessageIndex `json:"end"`
+}
+
 type InitMessageDigester interface {
 	DigestInitMessage(ctx context.Context, initialL1BaseFee *big.Int, serializedChainConfig []byte) *execution.MessageResult
 }
@@ -439,4 +444,18 @@ func (c *nethRpcClient) RecordBlockCreation(ctx context.Context, index arbutil.M
 	}
 
 	return &result, nil
+}
+
+func (c *nethRpcClient) PrepareForRecord(ctx context.Context, start, end arbutil.MessageIndex) error {
+	log.Info("Making JSON-RPC call to PrepareForRecord", "url", c.url, "start", start, "end", end)
+
+	params := prepareForRecordParams{Start: start, End: end}
+
+	var result any
+	if err := c.client.CallContext(ctx, &result, "PrepareForRecord", params); err != nil {
+		log.Error("Failed to call PrepareForRecord", "error", err)
+		return fmt.Errorf("failed to call PrepareForRecord: %w", err)
+	}
+
+	return nil
 }

@@ -469,9 +469,22 @@ func (w *compareExecutionClient) MarkValid(index arbutil.MessageIndex, resultHas
 func (w *compareExecutionClient) PrepareForRecord(ctx context.Context, start, end arbutil.MessageIndex) error {
 	startTime := time.Now()
 	log.Info("CompareExecutionClient: PrepareForRecord", "start", start, "end", end)
-	err := w.gethExecutionClient.PrepareForRecord(ctx, start, end)
-	log.Info("CompareExecutionClient: PrepareForRecord completed", "start", start, "end", end, "err", err, "elapsed", time.Since(startTime))
-	return err
+	nitroErr := w.gethExecutionClient.PrepareForRecord(ctx, start, end)
+	nethErr := w.nethermindExecutionClient.PrepareForRecord(ctx, start, end)
+
+	if err := compare("PrepareForRecord", struct{}{}, nitroErr, struct{}{}, nethErr); err != nil {
+		// Send to fatal error channel for graceful shutdown
+		select {
+		case w.fatalErrChan <- fmt.Errorf("compareExecutionClient PrepareForRecord: %s", err.Error()):
+		default:
+			log.Error("Failed to send comparison error to fatal channel", "err", err)
+		}
+
+		return err
+	}
+
+	log.Info("CompareExecutionClient: PrepareForRecord completed", "start", start, "end", end, "err", nitroErr, "elapsed", time.Since(startTime))
+	return nitroErr
 }
 
 // ---- execution.ExecutionBatchindexter interface methods ----
