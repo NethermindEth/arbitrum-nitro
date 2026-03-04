@@ -56,16 +56,8 @@ func (s *ComparatorSequencer) StartSequencing(ctx context.Context, seqCtx execut
 		return nil, extDur
 	}
 
-	// Only fatal when both sides produce a block but they differ.
-	// If Nethermind returns nil while Geth produces a block, it is a timing
-	// lag (Nethermind's mempool may not yet contain the transaction), not a
-	// correctness issue. The DigestMessage comparison catches real mismatches.
-	if intMsg != nil && extMsg != nil {
-		if err := compare("StartSequencing", intMsg, nil, extMsg, nil); err != nil && s.fatalErrChan != nil {
-			reportDivergence(s.fatalErrChan, "StartSequencing", err)
-		}
-	} else {
-		log.Warn("StartSequencing result mismatch (one side nil)", "internalNil", intMsg == nil, "externalNil", extMsg == nil)
+	if err := compare("StartSequencing", intMsg, nil, extMsg, nil); err != nil && s.fatalErrChan != nil {
+		reportDivergence(s.fatalErrChan, "StartSequencing", err)
 	}
 
 	return intMsg, extDur

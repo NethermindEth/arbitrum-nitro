@@ -155,6 +155,83 @@ CBROTLI_WASM_BUILD_ARGS ?=-d
 
 # user targets
 
+NITRO_BIN ?= $(output_root)/bin/nitro
+FOLLOWER_CONF ?= /Volumes/Intenso/nethermindProjects/arbitrum-nitro-testnode/data/config/sequencer_follower_config_local.json
+FOLLOWER_COMMON := \
+	--persistent.global-config /tmp/sequencer_follower \
+	--ipc.path /tmp/dev-test/geth.ipc \
+	--conf.file $(FOLLOWER_CONF) \
+	--node.seq-coordinator.my-url http://host.docker.internal:7547 \
+	--execution.nethermind-url http://localhost:20545 \
+	--http.port 7547 \
+	--ws.port 7548
+
+.PHONY: run-follower-internal
+run-follower-internal: clean-follower $(output_root)/bin/nitro
+	$(NITRO_BIN) $(FOLLOWER_COMMON) \
+		--execution.nethermind-ws-url ws://localhost:28551 \
+		--execution.execution-mode internal
+
+.PHONY: run-follower-sequencer-internal
+run-follower-sequencer-internal: clean-follower $(output_root)/bin/nitro
+	$(NITRO_BIN) $(FOLLOWER_COMMON) \
+		--execution.nethermind-ws-url http://host.docker.internal:7547 \
+		--execution.execution-mode internal \
+		--node.sequencer=true \
+		--node.delayed-sequencer.enable=true \
+		--node.seq-coordinator.enable=true \
+		--execution.sequencer.enable=true \
+		--execution.sequencer.max-block-speed=2s
+
+.PHONY: run-follower-external-execution
+run-follower-external-execution: clean-follower $(output_root)/bin/nitro
+	$(NITRO_BIN) $(FOLLOWER_COMMON) \
+		--execution.nethermind-ws-url ws://localhost:28551 \
+		--execution.execution-mode external-execution \
+		--node.parent-chain-reader.poll-interval=1s \
+		--node.inbox-reader.check-delay=1s
+
+.PHONY: run-follower-external-execution-compare
+run-follower-external-execution-compare: clean-follower $(output_root)/bin/nitro
+	$(NITRO_BIN) $(FOLLOWER_COMMON) \
+		--execution.nethermind-ws-url ws://localhost:28551 \
+		--execution.execution-mode external-execution-compare \
+		--node.parent-chain-reader.poll-interval=1s \
+		--node.inbox-reader.check-delay=1s
+
+.PHONY: run-follower-external-sequencer
+run-follower-external-sequencer: clean-follower $(output_root)/bin/nitro
+	$(NITRO_BIN) $(FOLLOWER_COMMON) \
+		--execution.nethermind-ws-url http://host.docker.internal:7547 \
+		--execution.execution-mode external-sequencer \
+		--node.sequencer=true \
+		--node.delayed-sequencer.enable=true \
+		--node.seq-coordinator.enable=true \
+		--execution.sequencer.enable=false
+
+.PHONY: run-follower-external-sequencer-compare
+run-follower-external-sequencer-compare: clean-follower $(output_root)/bin/nitro
+	$(NITRO_BIN) $(FOLLOWER_COMMON) \
+		--execution.nethermind-ws-url http://host.docker.internal:7547 \
+		--execution.execution-mode external-sequencer-compare \
+		--node.sequencer=true \
+		--node.delayed-sequencer.enable=true \
+		--node.seq-coordinator.enable=true \
+		--execution.sequencer.enable=true \
+		--execution.sequencer.max-block-speed=5s \
+		--execution.sequencer.timeboost.enable=true \
+		--execution.sequencer.timeboost.auction-contract-address=0x7DD3F2a3fAeF3B9F2364c335163244D3388Feb83 \
+		--execution.sequencer.timeboost.auctioneer-address=0x46225F4cee2b4A1d506C7f894bb3dAeB21BF1596 \
+		--execution.sequencer.timeboost.redis-url=redis://localhost:6379 \
+		--execution.sequencer.timeboost.sequencer-http-endpoint=http://localhost:7547 \
+		--http.api net,web3,eth,arb,auctioneer,timeboost \
+
+.PHONY: clean-follower
+clean-follower:
+	@echo "Cleaning sequencer follower directory..."
+	@rm -rf /tmp/sequencer_follower
+
+
 .PHONY: push
 push: lint test-go .make/fmt
 	@printf "%bdone building %s%b\n" $(color_pink) $$(expr $$(echo $? | wc -w) - 1) $(color_reset)
