@@ -247,5 +247,6 @@ func BuildComparisonSequencerTopology(deps TopologyDeps) (*ExecutionTopology, er
 		Sequencer: comparatorSeq,
 		Recorder:  gethNode,
 		ArbOSVer:  gethNode,
+		ExecNode:  gethNode,
 	}, nil
 }

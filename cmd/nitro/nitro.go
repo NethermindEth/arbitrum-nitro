@@ -762,7 +762,7 @@ func mainImpl() int {
 		}
 	}
 
-	// Timeboost is only available with internal execution mode
+	// Timeboost initialization - available in internal and compare sequencer modes
 	if execNode != nil {
 		err = execNode.InitializeTimeboost(ctx, chainInfo.ChainConfig)
 		if err != nil {
