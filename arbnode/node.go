@@ -137,8 +137,11 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("error validating Client config: %w", err)
 	}
 	if c.ComparisonExecution.Enable {
-		if c.ExecutionRPCClient.URL == "" || c.ExecutionRPCClient.URL == "self" || c.ExecutionRPCClient.URL == "self-auth" {
-			return errors.New("comparison execution requires primary execution-rpc-client.url to be an external RPC URL (not empty, 'self', or 'self-auth')")
+		// When UseInternalSequencer is true, "self" URLs are allowed - the internal node exposes its EL via websocket
+		// and the RPC client resolves "self" to stack.WSEndpoint() with dynamic port allocation
+		isSelfURL := c.ExecutionRPCClient.URL == "self" || c.ExecutionRPCClient.URL == "self-auth"
+		if c.ExecutionRPCClient.URL == "" || (isSelfURL && !c.ComparisonExecution.UseInternalSequencer) {
+			return errors.New("comparison execution requires primary execution-rpc-client.url to be an external RPC URL (or 'self'/'self-auth' with use-internal-sequencer)")
 		}
 		if c.ComparisonExecution.SecondaryRPCClient.URL == "" {
 			return errors.New("comparison execution requires secondary-rpc-client.url to be set")
