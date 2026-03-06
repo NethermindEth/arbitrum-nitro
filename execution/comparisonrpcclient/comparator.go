@@ -8,6 +8,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -183,6 +184,10 @@ func (c *Comparator) CompareWithExpected(
 		printMismatchReport(report)
 		c.compareBlock(ctx, expectedResult, secondaryResult, msgIdx)
 		sendFatalError(report, c.fatalErrChan)
+	} else {
+		// Block hashes match - also compare receipts to validate MultiGasUsed
+		// (MultiGasUsed is not part of consensus encoding, so block hash doesn't validate it)
+		c.compareReceiptsForResult(ctx, method, msgIdx, expectedResult)
 	}
 
 	return expectedResult, nil
@@ -212,6 +217,10 @@ func (c *Comparator) CompareMessageResult(
 				printMismatchReport(report)
 				c.compareBlock(ctx, primaryResult, secondaryResult, msgIdx)
 				sendFatalError(report, c.fatalErrChan)
+			} else {
+				// Block hashes match - also compare receipts to validate MultiGasUsed
+				// (MultiGasUsed is not part of consensus encoding, so block hash doesn't validate it)
+				c.compareReceiptsForResult(ctx, method, msgIdx, primaryResult)
 			}
 		}
 
@@ -551,6 +560,87 @@ func (c *Comparator) compareBlock(
 
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "=====================================================")
+}
+
+// compareReceiptsForResult fetches and compares receipts from both clients after a successful
+// DigestMessage. This validates MultiGasUsed which is NOT part of the consensus receipt encoding
+// and therefore not validated by block hash comparison.
+func (c *Comparator) compareReceiptsForResult(
+	ctx context.Context,
+	method string,
+	msgIdx arbutil.MessageIndex,
+	result *execution.MessageResult,
+) {
+	if c.primary == nil || c.secondary == nil || result == nil {
+		return
+	}
+	if result.BlockHash == (common.Hash{}) {
+		return
+	}
+
+	// Fetch receipts from both clients using block hash directly.
+	// Using hash instead of number because newly produced blocks are indexed by hash
+	// immediately, but the number-to-hash mapping may lag behind.
+	//
+	// When UseInternalSequencer is true, the block is produced internally before
+	// the RPC server indexes it. We retry a few times with small delays to allow
+	// the RPC server to catch up. In internal sequencer mode, blocks may take
+	// longer to be committed to the database, so we need a longer retry window.
+	var primaryReceipts []*types.Receipt
+	var primaryErr error
+	const maxRetries = 50
+	const retryDelay = 200 * time.Millisecond
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		primaryReceipts, primaryErr = c.primary.GetBlockReceiptsByHash(result.BlockHash).Await(ctx)
+		if primaryErr == nil && len(primaryReceipts) > 0 {
+			break
+		}
+		// If we got empty receipts, the RPC server might not have indexed the block yet
+		if attempt < maxRetries-1 {
+			time.Sleep(retryDelay)
+		}
+	}
+
+	secondaryReceipts, secondaryErr := c.secondary.GetBlockReceiptsByHash(result.BlockHash).Await(ctx)
+
+	// Fail if primary receipts are unavailable but secondary has receipts
+	// (0 receipts on both sides is valid for blocks with no transactions)
+	if primaryErr == nil && len(primaryReceipts) == 0 && len(secondaryReceipts) > 0 {
+		report := MismatchReport{
+			Method: method + " (receipts)",
+			MsgIdx: &msgIdx,
+			Diff:   fmt.Errorf("primary receipts unavailable for block %s after %d retries (secondary has %d receipts)", result.BlockHash.Hex()[:10], maxRetries, len(secondaryReceipts)),
+		}
+		printMismatchReport(report)
+		sendFatalError(report, c.fatalErrChan)
+		return
+	}
+
+	if primaryErr != nil || secondaryErr != nil {
+		if err := compareErrors(primaryErr, secondaryErr); err != nil {
+			report := MismatchReport{
+				Method:       method + " (receipts)",
+				MsgIdx:       &msgIdx,
+				Diff:         err,
+				PrimaryErr:   primaryErr,
+				SecondaryErr: secondaryErr,
+			}
+			printMismatch(report, c.fatalErrChan)
+		}
+		return
+	}
+
+	// Compare receipts (includes MultiGasUsed comparison via cmpOptions)
+	if err := compare(primaryReceipts, secondaryReceipts); err != nil {
+		report := MismatchReport{
+			Method: method + " (receipts/MultiGasUsed)",
+			MsgIdx: &msgIdx,
+			Diff:   err,
+		}
+		printMismatchReport(report)
+		sendFatalError(report, c.fatalErrChan)
+	}
 }
 
 func printMismatchReport(report MismatchReport) {

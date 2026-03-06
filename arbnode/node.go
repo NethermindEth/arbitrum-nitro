@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"math/big"
 	"strings"
+	"time"
 
 	"github.com/spf13/pflag"
 
@@ -1737,12 +1738,21 @@ func (n *Node) WriteMessageFromSequencer(pos arbutil.MessageIndex, msgWithMeta a
 
 	// When using comparison mode with internal sequencer, forward the message to the secondary
 	// for comparison. The primary (internal) already processed it, so we only need to compare.
+	// NOTE: We run comparison async because appendBlock is called AFTER this function returns.
+	// If we blocked here, the block wouldn't be available via RPC yet (deadlock).
+	// We use a separate context with timeout (not n.ctx) so comparisons can complete even
+	// during node shutdown.
 	if comparisonClient, ok := n.ExecutionClient.(*comparisonrpcclient.ComparisonClient); ok {
-		// Forward to secondary and compare with expected result
-		_, err = comparisonClient.ForwardToSecondary(pos, &msgWithMeta, &msgResult).Await(n.ctx)
-		if err != nil {
-			log.Error("Comparison mismatch in ForwardToSecondary", "pos", pos, "err", err)
-		}
+		go func() {
+			// Use a dedicated context with timeout, not n.ctx, so comparison can complete
+			// even if node is shutting down
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			_, err := comparisonClient.ForwardToSecondary(pos, &msgWithMeta, &msgResult).Await(ctx)
+			if err != nil {
+				log.Error("Comparison mismatch in ForwardToSecondary", "pos", pos, "err", err)
+			}
+		}()
 	}
 
 	return containers.NewReadyPromise(struct{}{}, nil)

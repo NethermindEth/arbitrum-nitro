@@ -159,6 +159,17 @@ func (c *Client) GetBlockReceipts(blockNum *big.Int) containers.PromiseInterface
 	})
 }
 
+// GetBlockReceiptsByHash retrieves all receipts for a block by hash using eth_getBlockReceipts
+// This is preferred over GetBlockReceipts when the block was just produced, as blocks are
+// indexed by hash immediately but the number-to-hash mapping may lag.
+func (c *Client) GetBlockReceiptsByHash(hash common.Hash) containers.PromiseInterface[[]*types.Receipt] {
+	return stopwaiter.LaunchPromiseThread(c, func(ctx context.Context) ([]*types.Receipt, error) {
+		var receipts []*types.Receipt
+		err := c.client.CallContext(ctx, &receipts, "eth_getBlockReceipts", hash)
+		return receipts, convertError(err)
+	})
+}
+
 // GetBlockByHash retrieves a block by its hash using eth_getBlockByHash (header only)
 func (c *Client) GetHeaderByHash(hash common.Hash) containers.PromiseInterface[*types.Header] {
 	return stopwaiter.LaunchPromiseThread(c, func(ctx context.Context) (*types.Header, error) {

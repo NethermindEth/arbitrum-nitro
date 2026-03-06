@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
@@ -29,6 +30,9 @@ type ComparisonClient struct {
 	primary    *executionrpcclient.Client
 	secondary  *executionrpcclient.Client
 	comparator *Comparator
+	// forwardMu serializes ForwardToSecondary calls to avoid "mutex held" errors
+	// from Nethermind when multiple blocks are forwarded concurrently
+	forwardMu sync.Mutex
 }
 
 func NewComparisonClient(
@@ -68,11 +72,16 @@ func (c *ComparisonClient) StopAndWait() {
 // and compares the result with the expected result from the primary.
 // This is used when UseInternalSequencer is true - the primary (internal) already
 // processed the block, so we only need to forward to secondary and compare.
+// Uses a mutex to serialize calls since Nethermind processes blocks sequentially.
 func (c *ComparisonClient) ForwardToSecondary(
 	msgIdx arbutil.MessageIndex,
 	msg *arbostypes.MessageWithMetadata,
 	expectedResult *execution.MessageResult,
 ) containers.PromiseInterface[*execution.MessageResult] {
+	// Serialize secondary calls to avoid "mutex held" errors from Nethermind
+	c.forwardMu.Lock()
+	defer c.forwardMu.Unlock()
+
 	secondaryPromise := c.secondary.DigestMessage(msgIdx, msg, nil)
 	return containers.NewReadyPromise(c.comparator.CompareWithExpected(
 		c.GetContext(),
