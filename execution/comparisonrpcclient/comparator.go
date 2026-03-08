@@ -116,19 +116,24 @@ func compare[T any](primary, secondary T) error {
 	return errors.New(reporter.String())
 }
 
-// isContextCanceledError checks if an error is related to context cancellation
-func isContextCanceledError(err error) bool {
+// isShutdownError checks if an error is related to shutdown (context cancellation or StopWaiter stopped)
+// These errors should not be reported as comparison mismatches since they're expected during test cleanup
+func isShutdownError(err error) bool {
 	if err == nil {
 		return false
 	}
 	if errors.Is(err, context.Canceled) {
 		return true
 	}
-	// Also check error message for wrapped/RPC errors that contain "context canceled"
+	// Check error message for shutdown-related errors
 	errMsg := err.Error()
+	// "stopped" is produced by StopWaiter when the component is shutting down
+	if errMsg == "stopped" {
+		return true
+	}
+	// Check for "context canceled" in various forms (direct, wrapped, RPC errors)
 	return errMsg == "context canceled" ||
-		// RPC errors often wrap context cancellation
-		(len(errMsg) > 16 && errMsg[len(errMsg)-16:] == "context canceled")
+		strings.Contains(errMsg, "context canceled")
 }
 
 // compareErrors compares two errors by their message strings only
@@ -138,11 +143,11 @@ func compareErrors(primary, secondary error) error {
 	}
 	// If primary succeeded but secondary failed due to context cancellation,
 	// this is a race condition during test shutdown - not a real mismatch
-	if primary == nil && isContextCanceledError(secondary) {
+	if primary == nil && isShutdownError(secondary) {
 		return nil
 	}
 	// If both errors are context cancellation, also not a mismatch
-	if isContextCanceledError(primary) && isContextCanceledError(secondary) {
+	if isShutdownError(primary) && isShutdownError(secondary) {
 		return nil
 	}
 	if (primary == nil) != (secondary == nil) {
@@ -168,6 +173,13 @@ func (c *Comparator) CompareWithExpected(
 	secondaryResult, secondaryErr := secondary.Await(ctx)
 
 	if secondaryErr != nil {
+		// Don't report context cancellation as a mismatch - this happens during shutdown
+		// when the node's StopWaiter context is canceled but async ForwardToSecondary
+		// goroutines are still running
+		if isShutdownError(secondaryErr) {
+			log.Debug("Ignoring context cancellation in comparison", "method", method, "msgIdx", msgIdx)
+			return expectedResult, secondaryErr
+		}
 		report := MismatchReport{
 			Method:       method,
 			MsgIdx:       &msgIdx,
@@ -593,10 +605,11 @@ func (c *Comparator) compareReceiptsForResult(
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		primaryReceipts, primaryErr = c.primary.GetBlockReceiptsByHash(result.BlockHash).Await(ctx)
-		if primaryErr == nil && len(primaryReceipts) > 0 {
+		if primaryErr == nil {
+			// Block found - accept whatever receipts we got (even 0 for blocks with no transactions)
 			break
 		}
-		// If we got empty receipts, the RPC server might not have indexed the block yet
+		// Block not found yet - RPC server might not have indexed it
 		if attempt < maxRetries-1 {
 			time.Sleep(retryDelay)
 		}
@@ -629,6 +642,15 @@ func (c *Comparator) compareReceiptsForResult(
 			printMismatch(report, c.fatalErrChan)
 		}
 		return
+	}
+
+	// Debug: Print MultiGas values for both clients
+	for i := 0; i < len(primaryReceipts) && i < len(secondaryReceipts); i++ {
+		pRec := primaryReceipts[i]
+		sRec := secondaryReceipts[i]
+		fmt.Fprintf(os.Stderr, "[DBG:COMPARE] Receipt[%d] MultiGasUsed comparison:\n", i)
+		fmt.Fprintf(os.Stderr, "  Primary (Nitro):      %+v EffGasPrice=%v\n", pRec.MultiGasUsed, pRec.EffectiveGasPrice)
+		fmt.Fprintf(os.Stderr, "  Secondary (Nethermind): %+v EffGasPrice=%v\n", sRec.MultiGasUsed, sRec.EffectiveGasPrice)
 	}
 
 	// Compare receipts (includes MultiGasUsed comparison via cmpOptions)
