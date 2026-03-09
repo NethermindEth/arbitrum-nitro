@@ -196,11 +196,13 @@ func (c *Comparator) CompareWithExpected(
 	}
 
 	if err := compare(expectedResult, secondaryResult); err != nil {
+		log.Debug("COMPARISON FAILED: block result mismatch", "method", method, "msgIdx", msgIdx)
 		report := MismatchReport{Method: method, MsgIdx: &msgIdx, Diff: err}
 		printMismatchReport(report)
 		c.compareBlock(ctx, expectedResult, secondaryResult, msgIdx)
 		sendFatalError(report, c.fatalErrChan)
 	} else {
+		log.Debug("COMPARISON PASSED: block result match", "method", method, "msgIdx", msgIdx, "blockHash", expectedResult.BlockHash.Hex())
 		// Block hashes match - also compare receipts to validate MultiGasUsed
 		// (MultiGasUsed is not part of consensus encoding, so block hash doesn't validate it)
 		c.compareReceiptsForResult(ctx, method, msgIdx, expectedResult)
@@ -229,11 +231,13 @@ func (c *Comparator) CompareMessageResult(
 
 		if primaryErr == nil && secondaryErr == nil {
 			if err := compare(primaryResult, secondaryResult); err != nil {
+				log.Debug("COMPARISON FAILED: block result mismatch", "method", method, "msgIdx", msgIdx)
 				report := MismatchReport{Method: method, MsgIdx: &msgIdx, Diff: err}
 				printMismatchReport(report)
 				c.compareBlock(ctx, primaryResult, secondaryResult, msgIdx)
 				sendFatalError(report, c.fatalErrChan)
 			} else {
+				log.Debug("COMPARISON PASSED: block result match", "method", method, "msgIdx", msgIdx, "blockHash", primaryResult.BlockHash.Hex())
 				// Block hashes match - also compare receipts to validate MultiGasUsed
 				// (MultiGasUsed is not part of consensus encoding, so block hash doesn't validate it)
 				c.compareReceiptsForResult(ctx, method, msgIdx, primaryResult)
@@ -646,20 +650,22 @@ func (c *Comparator) compareReceiptsForResult(
 		return
 	}
 
-	// Log MultiGas values for both clients at debug level
+	// Log MultiGas values for each receipt at debug level
 	for i := 0; i < len(primaryReceipts) && i < len(secondaryReceipts); i++ {
 		pRec := primaryReceipts[i]
 		sRec := secondaryReceipts[i]
-		log.Debug("MultiGasUsed comparison",
+		log.Debug("MULTIGAS VALUES",
 			"receiptIdx", i,
+			"txHash", pRec.TxHash.Hex(),
 			"primaryMultiGas", pRec.MultiGasUsed,
-			"primaryEffGasPrice", pRec.EffectiveGasPrice,
 			"secondaryMultiGas", sRec.MultiGasUsed,
+			"primaryEffGasPrice", pRec.EffectiveGasPrice,
 			"secondaryEffGasPrice", sRec.EffectiveGasPrice)
 	}
 
 	// Compare receipts (includes MultiGasUsed comparison via cmpOptions)
 	if err := compare(primaryReceipts, secondaryReceipts); err != nil {
+		log.Debug("RECEIPT COMPARISON FAILED", "method", method, "msgIdx", msgIdx, "receiptCount", len(primaryReceipts))
 		report := MismatchReport{
 			Method: method + " (receipts/MultiGasUsed)",
 			MsgIdx: &msgIdx,
@@ -667,6 +673,8 @@ func (c *Comparator) compareReceiptsForResult(
 		}
 		printMismatchReport(report)
 		sendFatalError(report, c.fatalErrChan)
+	} else {
+		log.Debug("RECEIPT COMPARISON PASSED", "method", method, "msgIdx", msgIdx, "receiptCount", len(primaryReceipts))
 	}
 }
 
