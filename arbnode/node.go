@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"math/big"
 	"strings"
-	"time"
 
 	"github.com/spf13/pflag"
 
@@ -327,6 +326,7 @@ type Node struct {
 	ExecutionClient          execution.ExecutionClient
 	ExecutionSequencer       execution.ExecutionSequencer
 	ExecutionRecorder        execution.ExecutionRecorder
+	ComparisonHandler        execution.ExecutionClientWithComparison // Optional, set when comparison mode is enabled
 	L1Reader                 *headerreader.HeaderReader
 	TxStreamer               *TransactionStreamer
 	DeployInfo               *chaininfo.RollupAddresses
@@ -1110,6 +1110,7 @@ func getNodeParentChainReaderDisabled(
 	executionClient execution.ExecutionClient,
 	executionSequencer execution.ExecutionSequencer,
 	executionRecorder execution.ExecutionRecorder,
+	comparisonHandler execution.ExecutionClientWithComparison,
 	txStreamer *TransactionStreamer,
 	blobReader daprovider.BlobReader,
 	broadcastServer *broadcaster.Broadcaster,
@@ -1139,6 +1140,7 @@ func getNodeParentChainReaderDisabled(
 		ExecutionClient:          executionClient,
 		ExecutionSequencer:       executionSequencer,
 		ExecutionRecorder:        executionRecorder,
+		ComparisonHandler:        comparisonHandler,
 		L1Reader:                 nil,
 		TxStreamer:               txStreamer,
 		DeployInfo:               nil,
@@ -1169,6 +1171,7 @@ func createNodeImpl(
 	executionClient execution.ExecutionClient,
 	executionSequencer execution.ExecutionSequencer,
 	executionRecorder execution.ExecutionRecorder,
+	comparisonHandler execution.ExecutionClientWithComparison,
 	arbOSVersionGetter execution.ArbOSVersionGetter,
 	consensusDB ethdb.Database,
 	configFetcher ConfigFetcher,
@@ -1241,7 +1244,7 @@ func createNodeImpl(
 	}
 
 	if !config.ParentChainReader.Enable {
-		return getNodeParentChainReaderDisabled(ctx, consensusDB, stack, executionClient, executionSequencer, executionRecorder, txStreamer, blobReader, broadcastServer, broadcastClients, coordinator, maintenanceRunner, syncMonitor, configFetcher, blockMetadataFetcher), nil
+		return getNodeParentChainReaderDisabled(ctx, consensusDB, stack, executionClient, executionSequencer, executionRecorder, comparisonHandler, txStreamer, blobReader, broadcastServer, broadcastClients, coordinator, maintenanceRunner, syncMonitor, configFetcher, blockMetadataFetcher), nil
 	}
 
 	delayedBridge, sequencerInbox, err := getDelayedBridgeAndSequencerInbox(deployInfo, l1client)
@@ -1295,6 +1298,7 @@ func createNodeImpl(
 		ExecutionClient:          executionClient,
 		ExecutionSequencer:       executionSequencer,
 		ExecutionRecorder:        executionRecorder,
+		ComparisonHandler:        comparisonHandler,
 		L1Reader:                 l1Reader,
 		TxStreamer:               txStreamer,
 		DeployInfo:               deployInfo,
@@ -1443,7 +1447,7 @@ func CreateConsensusNodeConnectedWithSimpleExecutionClient(
 	if executionClient == nil {
 		return nil, errors.New("execution client must be non-nil")
 	}
-	currentNode, err := createNodeImpl(ctx, stack, executionClient, nil, nil, executionClient, consensusDB, configFetcher, l2Config, l1client, deployInfo, txOptsValidator, txOptsBatchPoster, dataSigner, fatalErrChan, parentChainID, blobReader, latestWasmModuleRoot)
+	currentNode, err := createNodeImpl(ctx, stack, executionClient, nil, nil, nil, executionClient, consensusDB, configFetcher, l2Config, l1client, deployInfo, txOptsValidator, txOptsBatchPoster, dataSigner, fatalErrChan, parentChainID, blobReader, latestWasmModuleRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -1472,6 +1476,7 @@ func CreateConsensusNode(
 	var executionRecorder execution.ExecutionRecorder
 	var executionSequencer execution.ExecutionSequencer
 	var arbOSVersionGetter execution.ArbOSVersionGetter
+	var comparisonHandler execution.ExecutionClientWithComparison
 	if configFetcher.Get().ExecutionRPCClient.URL != "" {
 		execConfigFetcher := func() *rpcclient.ClientConfig { return &configFetcher.Get().ExecutionRPCClient }
 		cfg := configFetcher.Get()
@@ -1489,6 +1494,7 @@ func CreateConsensusNode(
 			executionClient = comparisonClient
 			executionRecorder = comparisonClient
 			arbOSVersionGetter = comparisonClient
+			comparisonHandler = comparisonClient
 			// When UseInternalSequencer is true, use the internal execution client for sequencing
 			// This enables sequencer mode while still using comparison for validation
 			if cfg.ComparisonExecution.UseInternalSequencer && fullExecutionClient != nil {
@@ -1514,7 +1520,7 @@ func CreateConsensusNode(
 		executionSequencer = fullExecutionClient
 		arbOSVersionGetter = fullExecutionClient
 	}
-	currentNode, err := createNodeImpl(ctx, stack, executionClient, executionSequencer, executionRecorder, arbOSVersionGetter, consensusDB, configFetcher, l2Config, l1client, deployInfo, txOptsValidator, txOptsBatchPoster, dataSigner, fatalErrChan, parentChainID, blobReader, latestWasmModuleRoot)
+	currentNode, err := createNodeImpl(ctx, stack, executionClient, executionSequencer, executionRecorder, comparisonHandler, arbOSVersionGetter, consensusDB, configFetcher, l2Config, l1client, deployInfo, txOptsValidator, txOptsBatchPoster, dataSigner, fatalErrChan, parentChainID, blobReader, latestWasmModuleRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -1738,21 +1744,12 @@ func (n *Node) WriteMessageFromSequencer(pos arbutil.MessageIndex, msgWithMeta a
 
 	// When using comparison mode with internal sequencer, forward the message to the secondary
 	// for comparison. The primary (internal) already processed it, so we only need to compare.
-	// NOTE: We run comparison async because appendBlock is called AFTER this function returns.
-	// If we blocked here, the block wouldn't be available via RPC yet (deadlock).
-	// We use a separate context with timeout (not n.ctx) so comparisons can complete even
-	// during node shutdown.
-	if comparisonClient, ok := n.ExecutionClient.(*comparisonrpcclient.ComparisonClient); ok {
-		go func() {
-			// Use a dedicated context with timeout, not n.ctx, so comparison can complete
-			// even if node is shutting down
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			_, err := comparisonClient.ForwardToSecondary(pos, &msgWithMeta, &msgResult).Await(ctx)
-			if err != nil {
-				log.Error("Comparison mismatch in ForwardToSecondary", "pos", pos, "err", err)
-			}
-		}()
+	// This is synchronous and serialized to ensure ordered message delivery to Nethermind.
+	// Receipt comparison is skipped to avoid deadlock (block not yet committed to primary RPC).
+	if n.ComparisonHandler != nil {
+		if err := n.ComparisonHandler.DigestMessageWithExpected(pos, &msgWithMeta, &msgResult); err != nil {
+			log.Error("Comparison mismatch in DigestMessageWithExpected", "pos", pos, "err", err)
+		}
 	}
 
 	return containers.NewReadyPromise(struct{}{}, nil)

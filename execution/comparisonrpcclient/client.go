@@ -30,8 +30,9 @@ type ComparisonClient struct {
 	primary    *executionrpcclient.Client
 	secondary  *executionrpcclient.Client
 	comparator *Comparator
-	// forwardMu serializes ForwardToSecondary calls to avoid "mutex held" errors
-	// from Nethermind when multiple blocks are forwarded concurrently
+
+	// forwardMu serializes DigestMessageWithExpected calls to ensure ordered
+	// message delivery to Nethermind (which processes blocks sequentially)
 	forwardMu sync.Mutex
 }
 
@@ -129,6 +130,53 @@ func (c *ComparisonClient) DigestMessage(
 		c.primary.DigestMessage(msgIdx, msg, msgForPrefetch),
 		c.secondary.DigestMessage(msgIdx, msg, msgForPrefetch),
 	)
+}
+
+// DigestMessageWithExpected processes a message on the secondary execution client
+// and compares with an expected result from the primary (internal sequencer).
+// Used when UseInternalSequencer is true - the primary already processed the block,
+// so we only need to forward to secondary and compare.
+// This method is synchronous and serialized to ensure ordered message delivery.
+// Note: Receipt comparison is skipped to avoid deadlock (block not yet committed to primary).
+func (c *ComparisonClient) DigestMessageWithExpected(
+	msgIdx arbutil.MessageIndex,
+	msg *arbostypes.MessageWithMetadata,
+	expectedResult *execution.MessageResult,
+) error {
+	// Serialize calls to ensure ordered delivery to Nethermind
+	c.forwardMu.Lock()
+	defer c.forwardMu.Unlock()
+
+	secondaryResult, secondaryErr := c.secondary.DigestMessage(msgIdx, msg, nil).Await(c.GetContext())
+	if secondaryErr != nil {
+		if isShutdownError(secondaryErr) {
+			log.Debug("Ignoring shutdown error in DigestMessageWithExpected", "msgIdx", msgIdx)
+			return nil
+		}
+		report := MismatchReport{
+			Method:       "DigestMessageWithExpected",
+			MsgIdx:       &msgIdx,
+			Diff:         fmt.Errorf("secondary error: %w", secondaryErr),
+			SecondaryErr: secondaryErr,
+		}
+		printMismatchReport(report)
+		sendFatalError(report, c.comparator.fatalErrChan)
+		return secondaryErr
+	}
+
+	// Compare block hash (consensus-critical)
+	if err := compare(expectedResult, secondaryResult); err != nil {
+		report := MismatchReport{
+			Method: "DigestMessageWithExpected",
+			MsgIdx: &msgIdx,
+			Diff:   err,
+		}
+		printMismatchReport(report)
+		sendFatalError(report, c.comparator.fatalErrChan)
+		return fmt.Errorf("comparison mismatch at msgIdx %d: %w", msgIdx, err)
+	}
+
+	return nil
 }
 
 func (c *ComparisonClient) Reorg(

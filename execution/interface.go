@@ -65,6 +65,15 @@ type ExecutionClient interface {
 	StopAndWait()
 }
 
+// ExecutionClientWithComparison is an optional interface for execution clients that support
+// comparison mode (e.g., ComparisonClient). When the internal sequencer produces a block,
+// the expected result is passed to compare against the secondary execution client.
+type ExecutionClientWithComparison interface {
+	// DigestMessageWithExpected processes a message and compares with an expected result.
+	// Used when UseInternalSequencer is true - the primary already processed the block.
+	DigestMessageWithExpected(msgIdx arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata, expectedResult *MessageResult) error
+}
+
 // needed for validators / stakers
 type ExecutionRecorder interface {
 	RecordBlockCreation(
