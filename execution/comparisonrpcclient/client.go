@@ -41,13 +41,14 @@ func NewComparisonClient(
 	secondaryConfig rpcclient.ClientConfigFetcher,
 	stack *node.Node,
 	fatalErrChan chan<- error,
+	config *ComparisonExecutionConfig,
 ) *ComparisonClient {
 	primary := executionrpcclient.NewClient(primaryConfig, stack)
 	secondary := executionrpcclient.NewClient(secondaryConfig, nil)
 	return &ComparisonClient{
 		primary:    primary,
 		secondary:  secondary,
-		comparator: NewComparator(fatalErrChan, primary, secondary),
+		comparator: NewComparator(fatalErrChan, primary, secondary, config.ReceiptRetries, config.ReceiptRetryDelay),
 	}
 }
 
@@ -150,6 +151,9 @@ func (c *ComparisonClient) DigestMessageWithExpected(
 	secondaryResult, secondaryErr := c.secondary.DigestMessage(msgIdx, msg, nil).Await(c.GetContext())
 	if secondaryErr != nil {
 		if isShutdownError(secondaryErr) {
+			// During graceful shutdown, return nil to allow clean termination.
+			// Returning an error would cause cascading failures in the sequencer.
+			// The shutdown is expected, so no comparison result is meaningful.
 			log.Debug("Ignoring shutdown error in DigestMessageWithExpected", "msgIdx", msgIdx)
 			return nil
 		}

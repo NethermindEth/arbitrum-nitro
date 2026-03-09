@@ -1490,6 +1490,7 @@ func CreateConsensusNode(
 				secondaryConfigFetcher,
 				stack,
 				fatalErrChan,
+				&cfg.ComparisonExecution,
 			)
 			executionClient = comparisonClient
 			executionRecorder = comparisonClient

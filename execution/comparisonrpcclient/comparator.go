@@ -46,19 +46,23 @@ var cmpOptions = cmp.Options{
 
 // Comparator handles comparison of execution results between primary and secondary clients
 type Comparator struct {
-	fatalErrChan   chan<- error
-	primary        *executionrpcclient.Client
-	secondary      *executionrpcclient.Client
-	compareHeaders bool // Whether to compare response headers
+	fatalErrChan      chan<- error
+	primary           *executionrpcclient.Client
+	secondary         *executionrpcclient.Client
+	compareHeaders    bool // Whether to compare response headers
+	receiptRetries    int
+	receiptRetryDelay time.Duration
 }
 
 // NewComparator creates a new Comparator
-func NewComparator(fatalErrChan chan<- error, primary, secondary *executionrpcclient.Client) *Comparator {
+func NewComparator(fatalErrChan chan<- error, primary, secondary *executionrpcclient.Client, receiptRetries int, receiptRetryDelay time.Duration) *Comparator {
 	return &Comparator{
-		fatalErrChan:   fatalErrChan,
-		primary:        primary,
-		secondary:      secondary,
-		compareHeaders: primary.CapturedHeaders() != nil && secondary.CapturedHeaders() != nil,
+		fatalErrChan:      fatalErrChan,
+		primary:           primary,
+		secondary:         secondary,
+		compareHeaders:    primary.CapturedHeaders() != nil && secondary.CapturedHeaders() != nil,
+		receiptRetries:    receiptRetries,
+		receiptRetryDelay: receiptRetryDelay,
 	}
 }
 
@@ -600,18 +604,16 @@ func (c *Comparator) compareReceiptsForResult(
 	// longer to be committed to the database, so we need a longer retry window.
 	var primaryReceipts []*types.Receipt
 	var primaryErr error
-	const maxRetries = 50
-	const retryDelay = 200 * time.Millisecond
 
-	for attempt := 0; attempt < maxRetries; attempt++ {
+	for attempt := 0; attempt < c.receiptRetries; attempt++ {
 		primaryReceipts, primaryErr = c.primary.GetBlockReceiptsByHash(result.BlockHash).Await(ctx)
 		if primaryErr == nil {
 			// Block found - accept whatever receipts we got (even 0 for blocks with no transactions)
 			break
 		}
 		// Block not found yet - RPC server might not have indexed it
-		if attempt < maxRetries-1 {
-			time.Sleep(retryDelay)
+		if attempt < c.receiptRetries-1 {
+			time.Sleep(c.receiptRetryDelay)
 		}
 	}
 
@@ -623,7 +625,7 @@ func (c *Comparator) compareReceiptsForResult(
 		report := MismatchReport{
 			Method: method + " (receipts)",
 			MsgIdx: &msgIdx,
-			Diff:   fmt.Errorf("primary receipts unavailable for block %s after %d retries (secondary has %d receipts)", result.BlockHash.Hex()[:10], maxRetries, len(secondaryReceipts)),
+			Diff:   fmt.Errorf("primary receipts unavailable for block %s after %d retries (secondary has %d receipts)", result.BlockHash.Hex()[:10], c.receiptRetries, len(secondaryReceipts)),
 		}
 		printMismatchReport(report)
 		sendFatalError(report, c.fatalErrChan)
@@ -644,13 +646,16 @@ func (c *Comparator) compareReceiptsForResult(
 		return
 	}
 
-	// Debug: Print MultiGas values for both clients
+	// Log MultiGas values for both clients at debug level
 	for i := 0; i < len(primaryReceipts) && i < len(secondaryReceipts); i++ {
 		pRec := primaryReceipts[i]
 		sRec := secondaryReceipts[i]
-		fmt.Fprintf(os.Stderr, "[DBG:COMPARE] Receipt[%d] MultiGasUsed comparison:\n", i)
-		fmt.Fprintf(os.Stderr, "  Primary (Nitro):      %+v EffGasPrice=%v\n", pRec.MultiGasUsed, pRec.EffectiveGasPrice)
-		fmt.Fprintf(os.Stderr, "  Secondary (Nethermind): %+v EffGasPrice=%v\n", sRec.MultiGasUsed, sRec.EffectiveGasPrice)
+		log.Debug("MultiGasUsed comparison",
+			"receiptIdx", i,
+			"primaryMultiGas", pRec.MultiGasUsed,
+			"primaryEffGasPrice", pRec.EffectiveGasPrice,
+			"secondaryMultiGas", sRec.MultiGasUsed,
+			"secondaryEffGasPrice", sRec.EffectiveGasPrice)
 	}
 
 	// Compare receipts (includes MultiGasUsed comparison via cmpOptions)
