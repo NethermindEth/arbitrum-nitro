@@ -140,18 +140,19 @@ func isShutdownError(err error) bool {
 		strings.Contains(errMsg, "context canceled")
 }
 
-// compareErrors compares two errors by their message strings only
-func compareErrors(primary, secondary error) error {
+// compareErrors compares two errors by their message strings only.
+// If ctx is cancelled (shutdown in progress), skip comparison entirely - any error
+// mismatch during shutdown is expected due to race conditions between the two clients.
+func compareErrors(ctx context.Context, primary, secondary error) error {
+	// During shutdown, skip all error comparisons - mismatches are expected
+	if ctx.Err() != nil {
+		return nil
+	}
 	if primary == nil && secondary == nil {
 		return nil
 	}
-	// If primary succeeded but secondary failed due to context cancellation,
-	// this is a race condition during test shutdown - not a real mismatch
-	if primary == nil && isShutdownError(secondary) {
-		return nil
-	}
-	// If both errors are context cancellation, also not a mismatch
-	if isShutdownError(primary) && isShutdownError(secondary) {
+	// If either error is a shutdown error, skip comparison - we're in the process of stopping
+	if isShutdownError(primary) || isShutdownError(secondary) {
 		return nil
 	}
 	if (primary == nil) != (secondary == nil) {
@@ -225,7 +226,7 @@ func (c *Comparator) CompareMessageResult(
 		// Compare response headers (X-Arb-*)
 		c.compareResponseHeaders(method, &msgIdx)
 
-		if err := compareErrors(primaryErr, secondaryErr); err != nil {
+		if err := compareErrors(ctx, primaryErr, secondaryErr); err != nil {
 			printMismatch(MismatchReport{Method: method, MsgIdx: &msgIdx, Diff: err, PrimaryErr: primaryErr, SecondaryErr: secondaryErr}, c.fatalErrChan)
 		}
 
@@ -262,7 +263,7 @@ func (c *Comparator) CompareMessageResults(
 		// Compare response headers (X-Arb-*)
 		c.compareResponseHeaders(method, &msgIdxStart)
 
-		if err := compareErrors(primaryErr, secondaryErr); err != nil {
+		if err := compareErrors(ctx, primaryErr, secondaryErr); err != nil {
 			printMismatch(MismatchReport{Method: method, MsgIdx: &msgIdxStart, Diff: err, PrimaryErr: primaryErr, SecondaryErr: secondaryErr}, c.fatalErrChan)
 		}
 
@@ -300,7 +301,7 @@ func (c *Comparator) CompareMessageIndex(
 		primaryResult, primaryErr := primary.Await(ctx)
 		secondaryResult, secondaryErr := secondary.Await(ctx)
 
-		if err := compareErrors(primaryErr, secondaryErr); err != nil {
+		if err := compareErrors(ctx, primaryErr, secondaryErr); err != nil {
 			printMismatch(MismatchReport{Method: method, Diff: err, PrimaryErr: primaryErr, SecondaryErr: secondaryErr}, c.fatalErrChan)
 		}
 		if primaryErr == nil && secondaryErr == nil {
@@ -323,7 +324,7 @@ func (c *Comparator) CompareEmpty(
 		_, primaryErr := primary.Await(ctx)
 		_, secondaryErr := secondary.Await(ctx)
 
-		if err := compareErrors(primaryErr, secondaryErr); err != nil {
+		if err := compareErrors(ctx, primaryErr, secondaryErr); err != nil {
 			printMismatch(MismatchReport{Method: method, Diff: err, PrimaryErr: primaryErr, SecondaryErr: secondaryErr}, c.fatalErrChan)
 		}
 
@@ -342,7 +343,7 @@ func (c *Comparator) CompareEmptyWithMsgIdx(
 		_, primaryErr := primary.Await(ctx)
 		_, secondaryErr := secondary.Await(ctx)
 
-		if err := compareErrors(primaryErr, secondaryErr); err != nil {
+		if err := compareErrors(ctx, primaryErr, secondaryErr); err != nil {
 			printMismatch(MismatchReport{Method: method, MsgIdx: &msgIdx, Diff: err, PrimaryErr: primaryErr, SecondaryErr: secondaryErr}, c.fatalErrChan)
 		}
 
@@ -360,7 +361,7 @@ func (c *Comparator) CompareBool(
 		primaryResult, primaryErr := primary.Await(ctx)
 		secondaryResult, secondaryErr := secondary.Await(ctx)
 
-		if err := compareErrors(primaryErr, secondaryErr); err != nil {
+		if err := compareErrors(ctx, primaryErr, secondaryErr); err != nil {
 			printMismatch(MismatchReport{Method: method, Diff: err, PrimaryErr: primaryErr, SecondaryErr: secondaryErr}, c.fatalErrChan)
 		}
 		if primaryErr == nil && secondaryErr == nil {
@@ -383,7 +384,7 @@ func (c *Comparator) CompareMaintenanceStatus(
 		primaryResult, primaryErr := primary.Await(ctx)
 		secondaryResult, secondaryErr := secondary.Await(ctx)
 
-		if err := compareErrors(primaryErr, secondaryErr); err != nil {
+		if err := compareErrors(ctx, primaryErr, secondaryErr); err != nil {
 			printMismatch(MismatchReport{Method: method, Diff: err, PrimaryErr: primaryErr, SecondaryErr: secondaryErr}, c.fatalErrChan)
 		}
 		if primaryErr == nil && secondaryErr == nil {
@@ -407,7 +408,7 @@ func (c *Comparator) CompareUint64(
 		primaryResult, primaryErr := primary.Await(ctx)
 		secondaryResult, secondaryErr := secondary.Await(ctx)
 
-		if err := compareErrors(primaryErr, secondaryErr); err != nil {
+		if err := compareErrors(ctx, primaryErr, secondaryErr); err != nil {
 			printMismatch(MismatchReport{Method: method, MsgIdx: &msgIdx, Diff: err, PrimaryErr: primaryErr, SecondaryErr: secondaryErr}, c.fatalErrChan)
 		}
 		if primaryErr == nil && secondaryErr == nil {
@@ -431,7 +432,7 @@ func (c *Comparator) CompareRecordResult(
 		primaryResult, primaryErr := primary.Await(ctx)
 		secondaryResult, secondaryErr := secondary.Await(ctx)
 
-		if err := compareErrors(primaryErr, secondaryErr); err != nil {
+		if err := compareErrors(ctx, primaryErr, secondaryErr); err != nil {
 			printMismatch(MismatchReport{Method: method, MsgIdx: &msgIdx, Diff: err, PrimaryErr: primaryErr, SecondaryErr: secondaryErr}, c.fatalErrChan)
 		}
 		if primaryErr == nil && secondaryErr == nil {
@@ -455,7 +456,7 @@ func (c *Comparator) CompareHeader(
 		primaryResult, primaryErr := primary.Await(ctx)
 		secondaryResult, secondaryErr := secondary.Await(ctx)
 
-		if err := compareErrors(primaryErr, secondaryErr); err != nil {
+		if err := compareErrors(ctx, primaryErr, secondaryErr); err != nil {
 			printMismatch(MismatchReport{Method: method, BlockNum: blockNum, Diff: err, PrimaryErr: primaryErr, SecondaryErr: secondaryErr}, c.fatalErrChan)
 		}
 		if primaryErr == nil && secondaryErr == nil {
@@ -479,7 +480,7 @@ func (c *Comparator) CompareHeaderByHash(
 		primaryResult, primaryErr := primary.Await(ctx)
 		secondaryResult, secondaryErr := secondary.Await(ctx)
 
-		if err := compareErrors(primaryErr, secondaryErr); err != nil {
+		if err := compareErrors(ctx, primaryErr, secondaryErr); err != nil {
 			printMismatch(MismatchReport{Method: method, Hash: &hash, Diff: err, PrimaryErr: primaryErr, SecondaryErr: secondaryErr}, c.fatalErrChan)
 		}
 		if primaryErr == nil && secondaryErr == nil {
@@ -503,7 +504,7 @@ func (c *Comparator) CompareReceipts(
 		primaryResult, primaryErr := primary.Await(ctx)
 		secondaryResult, secondaryErr := secondary.Await(ctx)
 
-		if err := compareErrors(primaryErr, secondaryErr); err != nil {
+		if err := compareErrors(ctx, primaryErr, secondaryErr); err != nil {
 			printMismatch(MismatchReport{Method: method, BlockNum: blockNum, Diff: err, PrimaryErr: primaryErr, SecondaryErr: secondaryErr}, c.fatalErrChan)
 		}
 		if primaryErr == nil && secondaryErr == nil {
@@ -637,7 +638,7 @@ func (c *Comparator) compareReceiptsForResult(
 	}
 
 	if primaryErr != nil || secondaryErr != nil {
-		if err := compareErrors(primaryErr, secondaryErr); err != nil {
+		if err := compareErrors(ctx, primaryErr, secondaryErr); err != nil {
 			report := MismatchReport{
 				Method:       method + " (receipts)",
 				MsgIdx:       &msgIdx,
