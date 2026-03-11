@@ -12,14 +12,12 @@ type ComparisonExecutionConfig struct {
 	Enable               bool                   `json:"enable,omitempty" koanf:"enable"`
 	UseInternalSequencer bool                   `json:"use-internal-sequencer,omitempty" koanf:"use-internal-sequencer"`
 	SecondaryRPCClient   rpcclient.ClientConfig `json:"secondary-rpc-client,omitempty" koanf:"secondary-rpc-client"`
-	ReceiptRetries       int                    `json:"receipt-retries,omitempty" koanf:"receipt-retries"`
-	ReceiptRetryDelay    time.Duration          `json:"receipt-retry-delay,omitempty" koanf:"receipt-retry-delay"`
+	ReceiptTimeout       time.Duration          `json:"receipt-timeout,omitempty" koanf:"receipt-timeout"`
 }
 
 var DefaultComparisonExecutionConfig = ComparisonExecutionConfig{
-	Enable:            false,
-	ReceiptRetries:    50,
-	ReceiptRetryDelay: 200 * time.Millisecond,
+	Enable:         false,
+	ReceiptTimeout: 10 * time.Second,
 	SecondaryRPCClient: rpcclient.ClientConfig{
 		URL:                       "",
 		JWTSecret:                 "",
@@ -34,7 +32,6 @@ var DefaultComparisonExecutionConfig = ComparisonExecutionConfig{
 func ComparisonExecutionConfigAddOptions(prefix string, f *pflag.FlagSet) {
 	f.Bool(prefix+".enable", DefaultComparisonExecutionConfig.Enable, "enable comparison mode to compare primary and secondary execution clients")
 	f.Bool(prefix+".use-internal-sequencer", DefaultComparisonExecutionConfig.UseInternalSequencer, "use internal execution client for sequencing while using RPC clients for comparison (enables sequencer mode in comparison)")
-	f.Int(prefix+".receipt-retries", DefaultComparisonExecutionConfig.ReceiptRetries, "number of retries when fetching receipts for comparison (receipts may not be immediately available)")
-	f.Duration(prefix+".receipt-retry-delay", DefaultComparisonExecutionConfig.ReceiptRetryDelay, "delay between receipt fetch retries")
+	f.Duration(prefix+".receipt-timeout", DefaultComparisonExecutionConfig.ReceiptTimeout, "timeout waiting for block to be available before fetching receipts")
 	rpcclient.RPCClientAddOptions(prefix+".secondary-rpc-client", f, &DefaultComparisonExecutionConfig.SecondaryRPCClient)
 }

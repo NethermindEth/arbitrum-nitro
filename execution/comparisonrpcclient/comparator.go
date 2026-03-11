@@ -8,6 +8,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
@@ -46,23 +47,65 @@ var cmpOptions = cmp.Options{
 
 // Comparator handles comparison of execution results between primary and secondary clients
 type Comparator struct {
-	fatalErrChan      chan<- error
-	primary           *executionrpcclient.Client
-	secondary         *executionrpcclient.Client
-	compareHeaders    bool // Whether to compare response headers
-	receiptRetries    int
-	receiptRetryDelay time.Duration
+	fatalErrChan   chan<- error
+	primary        *executionrpcclient.Client
+	secondary      *executionrpcclient.Client
+	compareHeaders bool // Whether to compare response headers
+	receiptTimeout time.Duration
+
+	// Block notification system for subscription-based waiting
+	blockWaitersMu sync.Mutex
+	blockWaiters   map[common.Hash][]chan struct{} // block hash -> channels waiting for it
 }
 
 // NewComparator creates a new Comparator
-func NewComparator(fatalErrChan chan<- error, primary, secondary *executionrpcclient.Client, receiptRetries int, receiptRetryDelay time.Duration) *Comparator {
+func NewComparator(fatalErrChan chan<- error, primary, secondary *executionrpcclient.Client, receiptTimeout time.Duration) *Comparator {
 	return &Comparator{
-		fatalErrChan:      fatalErrChan,
-		primary:           primary,
-		secondary:         secondary,
-		compareHeaders:    primary.CapturedHeaders() != nil && secondary.CapturedHeaders() != nil,
-		receiptRetries:    receiptRetries,
-		receiptRetryDelay: receiptRetryDelay,
+		fatalErrChan:   fatalErrChan,
+		primary:        primary,
+		secondary:      secondary,
+		compareHeaders: primary.CapturedHeaders() != nil && secondary.CapturedHeaders() != nil,
+		receiptTimeout: receiptTimeout,
+		blockWaiters:   make(map[common.Hash][]chan struct{}),
+	}
+}
+
+// waitForBlock registers interest in a block hash and returns a channel that will be closed
+// when the block is notified as available. The caller must call unregisterBlockWaiter when done.
+func (c *Comparator) waitForBlock(hash common.Hash) <-chan struct{} {
+	ch := make(chan struct{})
+	c.blockWaitersMu.Lock()
+	c.blockWaiters[hash] = append(c.blockWaiters[hash], ch)
+	c.blockWaitersMu.Unlock()
+	return ch
+}
+
+// unregisterBlockWaiter removes a specific waiter channel for a block hash.
+func (c *Comparator) unregisterBlockWaiter(hash common.Hash, ch <-chan struct{}) {
+	c.blockWaitersMu.Lock()
+	defer c.blockWaitersMu.Unlock()
+	waiters := c.blockWaiters[hash]
+	for i, w := range waiters {
+		if w == ch {
+			c.blockWaiters[hash] = append(waiters[:i], waiters[i+1:]...)
+			break
+		}
+	}
+	if len(c.blockWaiters[hash]) == 0 {
+		delete(c.blockWaiters, hash)
+	}
+}
+
+// NotifyBlock notifies all waiters that a block with the given hash is now available.
+// This should be called when a new block head is received via subscription.
+func (c *Comparator) NotifyBlock(hash common.Hash) {
+	c.blockWaitersMu.Lock()
+	waiters := c.blockWaiters[hash]
+	delete(c.blockWaiters, hash)
+	c.blockWaitersMu.Unlock()
+
+	for _, ch := range waiters {
+		close(ch)
 	}
 }
 
@@ -599,29 +642,25 @@ func (c *Comparator) compareReceiptsForResult(
 		return
 	}
 
-	// Fetch receipts from both clients using block hash directly.
-	// Using hash instead of number because newly produced blocks are indexed by hash
-	// immediately, but the number-to-hash mapping may lag behind.
-	//
-	// When UseInternalSequencer is true, the block is produced internally before
-	// the RPC server indexes it. We retry a few times with small delays to allow
-	// the RPC server to catch up. In internal sequencer mode, blocks may take
-	// longer to be committed to the database, so we need a longer retry window.
-	var primaryReceipts []*types.Receipt
-	var primaryErr error
+	// Wait for block to be available via subscription before fetching receipts.
+	// The block is produced internally and may not be visible to RPC immediately.
+	// We wait for the newHeads subscription to notify us that the block is committed.
+	blockWaiter := c.waitForBlock(result.BlockHash)
+	defer c.unregisterBlockWaiter(result.BlockHash, blockWaiter)
 
-	for attempt := 0; attempt < c.receiptRetries; attempt++ {
-		primaryReceipts, primaryErr = c.primary.GetBlockReceiptsByHash(result.BlockHash).Await(ctx)
-		if primaryErr == nil {
-			// Block found - accept whatever receipts we got (even 0 for blocks with no transactions)
-			break
-		}
-		// Block not found yet - RPC server might not have indexed it
-		if attempt < c.receiptRetries-1 {
-			time.Sleep(c.receiptRetryDelay)
-		}
+	select {
+	case <-ctx.Done():
+		return
+	case <-blockWaiter:
+		// Block is now available
+		log.Debug("Block notification received, fetching receipts", "blockHash", result.BlockHash.Hex()[:10])
+	case <-time.After(c.receiptTimeout):
+		// Timeout - try to fetch anyway in case subscription missed it
+		log.Debug("Block wait timeout, attempting fetch anyway", "blockHash", result.BlockHash.Hex()[:10], "timeout", c.receiptTimeout)
 	}
 
+	// Fetch receipts from both clients using block hash directly.
+	primaryReceipts, primaryErr := c.primary.GetBlockReceiptsByHash(result.BlockHash).Await(ctx)
 	secondaryReceipts, secondaryErr := c.secondary.GetBlockReceiptsByHash(result.BlockHash).Await(ctx)
 
 	// Fail if primary receipts are unavailable but secondary has receipts
@@ -630,7 +669,7 @@ func (c *Comparator) compareReceiptsForResult(
 		report := MismatchReport{
 			Method: method + " (receipts)",
 			MsgIdx: &msgIdx,
-			Diff:   fmt.Errorf("primary receipts unavailable for block %s after %d retries (secondary has %d receipts)", result.BlockHash.Hex()[:10], c.receiptRetries, len(secondaryReceipts)),
+			Diff:   fmt.Errorf("primary receipts unavailable for block %s after waiting %v (secondary has %d receipts)", result.BlockHash.Hex()[:10], c.receiptTimeout, len(secondaryReceipts)),
 		}
 		printMismatchReport(report)
 		sendFatalError(report, c.fatalErrChan)

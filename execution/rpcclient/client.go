@@ -178,3 +178,18 @@ func (c *Client) GetHeaderByHash(hash common.Hash) containers.PromiseInterface[*
 		return head, convertError(err)
 	})
 }
+
+// SubscribeNewHead subscribes to notifications about new block headers.
+// The channel will receive headers as they are added to the chain.
+func (c *Client) SubscribeNewHead(ctx context.Context, ch chan<- *types.Header) (Subscription, error) {
+	return c.client.EthSubscribe(ctx, ch, "newHeads")
+}
+
+// Subscription represents an event subscription where events are delivered on a channel.
+type Subscription interface {
+	// Unsubscribe cancels the sending of events to the data channel and closes the error channel.
+	Unsubscribe()
+	// Err returns the subscription error channel. The error channel receives
+	// a value if there is an issue with the subscription. Only one value will be sent.
+	Err() <-chan error
+}

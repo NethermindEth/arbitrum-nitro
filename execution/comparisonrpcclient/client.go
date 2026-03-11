@@ -48,7 +48,7 @@ func NewComparisonClient(
 	return &ComparisonClient{
 		primary:    primary,
 		secondary:  secondary,
-		comparator: NewComparator(fatalErrChan, primary, secondary, config.ReceiptRetries, config.ReceiptRetryDelay),
+		comparator: NewComparator(fatalErrChan, primary, secondary, config.ReceiptTimeout),
 	}
 }
 
@@ -60,8 +60,42 @@ func (c *ComparisonClient) Start(ctx context.Context) error {
 	if err := c.secondary.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start secondary execution client: %w", err)
 	}
+
+	// Start the newHeads subscription loop to notify when blocks are available
+	c.LaunchThread(c.subscribeNewHeadsLoop)
+
 	log.Info("Comparison execution client started", "primary", "connected", "secondary", "connected")
 	return nil
+}
+
+// subscribeNewHeadsLoop subscribes to newHeads on the primary and notifies waiting
+// receipt comparisons when their blocks become available.
+func (c *ComparisonClient) subscribeNewHeadsLoop(ctx context.Context) {
+	headers := make(chan *types.Header, 16)
+	sub, err := c.primary.SubscribeNewHead(ctx, headers)
+	if err != nil {
+		log.Warn("Failed to subscribe to newHeads on primary, falling back to polling", "err", err)
+		return
+	}
+	defer sub.Unsubscribe()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case err := <-sub.Err():
+			if err != nil {
+				log.Warn("newHeads subscription error", "err", err)
+			}
+			return
+		case header := <-headers:
+			if header != nil {
+				hash := header.Hash()
+				log.Debug("New block head received", "number", header.Number, "hash", hash.Hex()[:10])
+				c.comparator.NotifyBlock(hash)
+			}
+		}
+	}
 }
 
 func (c *ComparisonClient) StopAndWait() {
@@ -138,7 +172,7 @@ func (c *ComparisonClient) DigestMessage(
 // Used when UseInternalSequencer is true - the primary already processed the block,
 // so we only need to forward to secondary and compare.
 // This method is synchronous and serialized to ensure ordered message delivery.
-// Note: Receipt comparison is skipped to avoid deadlock (block not yet committed to primary).
+// Receipt comparison is done asynchronously after the block is committed to primary RPC.
 func (c *ComparisonClient) DigestMessageWithExpected(
 	msgIdx arbutil.MessageIndex,
 	msg *arbostypes.MessageWithMetadata,
@@ -179,6 +213,14 @@ func (c *ComparisonClient) DigestMessageWithExpected(
 		sendFatalError(report, c.comparator.fatalErrChan)
 		return fmt.Errorf("comparison mismatch at msgIdx %d: %w", msgIdx, err)
 	}
+
+	log.Debug("DigestMessageWithExpected block hash match", "msgIdx", msgIdx, "blockHash", expectedResult.BlockHash.Hex())
+
+	// Compare receipts asynchronously - the block may not be committed to primary RPC yet.
+	// compareReceiptsForResult has retry logic to wait for the block to be available.
+	c.LaunchThread(func(ctx context.Context) {
+		c.comparator.compareReceiptsForResult(ctx, "DigestMessageWithExpected", msgIdx, expectedResult)
+	})
 
 	return nil
 }
