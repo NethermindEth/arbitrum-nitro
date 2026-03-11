@@ -642,25 +642,30 @@ func (c *Comparator) compareReceiptsForResult(
 		return
 	}
 
-	// Wait for block to be available via subscription before fetching receipts.
-	// The block is produced internally and may not be visible to RPC immediately.
-	// We wait for the newHeads subscription to notify us that the block is committed.
-	blockWaiter := c.waitForBlock(result.BlockHash)
-	defer c.unregisterBlockWaiter(result.BlockHash, blockWaiter)
+	// Try fetching receipts immediately - block may already be available.
+	// Only wait for subscription notification if initial fetch returns nil receipts (block not found).
+	// Note: nil means block not found, empty slice [] means block found but has no transactions.
+	primaryReceipts, primaryErr := c.primary.GetBlockReceiptsByHash(result.BlockHash).Await(ctx)
 
-	select {
-	case <-ctx.Done():
-		return
-	case <-blockWaiter:
-		// Block is now available
-		log.Debug("Block notification received, fetching receipts", "blockHash", result.BlockHash.Hex()[:10])
-	case <-time.After(c.receiptTimeout):
-		// Timeout - try to fetch anyway in case subscription missed it
-		log.Debug("Block wait timeout, attempting fetch anyway", "blockHash", result.BlockHash.Hex()[:10], "timeout", c.receiptTimeout)
+	// If primary returned error or nil receipts (block not found), wait for block notification and retry
+	if primaryErr != nil || primaryReceipts == nil {
+		blockWaiter := c.waitForBlock(result.BlockHash)
+
+		select {
+		case <-ctx.Done():
+			c.unregisterBlockWaiter(result.BlockHash, blockWaiter)
+			return
+		case <-blockWaiter:
+			log.Debug("Block notification received, retrying fetch", "blockHash", result.BlockHash.Hex()[:10])
+		case <-time.After(c.receiptTimeout):
+			log.Debug("Block wait timeout, retrying fetch anyway", "blockHash", result.BlockHash.Hex()[:10], "timeout", c.receiptTimeout)
+		}
+		c.unregisterBlockWaiter(result.BlockHash, blockWaiter)
+
+		// Retry fetch after waiting
+		primaryReceipts, primaryErr = c.primary.GetBlockReceiptsByHash(result.BlockHash).Await(ctx)
 	}
 
-	// Fetch receipts from both clients using block hash directly.
-	primaryReceipts, primaryErr := c.primary.GetBlockReceiptsByHash(result.BlockHash).Await(ctx)
 	secondaryReceipts, secondaryErr := c.secondary.GetBlockReceiptsByHash(result.BlockHash).Await(ctx)
 
 	// Fail if primary receipts are unavailable but secondary has receipts
