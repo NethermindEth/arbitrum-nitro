@@ -144,7 +144,7 @@ func compare[T any](op string, intRes T, intErr error, extRes T, extErr error) e
 	return nil
 }
 
-func compareRecordResult(op string, intRes *execution.RecordResult, intErr error, extRes *execution.RecordResult, extErr error) error {
+func compareRecordResult(op string, intRes *execution.RecordResult, intErr error, extRes *execution.RecordResult, extErr error, index arbutil.MessageIndex) error {
 	switch {
 	case intErr != nil && extErr != nil:
 		return fmt.Errorf("both operations failed: internal=%v external=%v", intErr, extErr)
@@ -191,6 +191,14 @@ func compareRecordResult(op string, intRes *execution.RecordResult, intErr error
 			fmt.Printf("ERROR: Execution mismatch detected in operation: %s\n", op)
 			fmt.Printf("Diff details:\n%s\n", diff)
 			return fmt.Errorf("execution mismatch in %s", op)
+		}
+
+		nitroPreimagesCount := len(intRes.Preimages)
+		nmcPreimagesCount := len(extRes.Preimages)
+		if nitroPreimagesCount == nmcPreimagesCount {
+			log.Info("Preimages count match", "index", index, "count", nitroPreimagesCount)
+		} else {
+			log.Warn("Preimages count mismatch", "index", index, "nitro", nitroPreimagesCount, "nmc", nmcPreimagesCount)
 		}
 	}
 	return nil
@@ -432,7 +440,7 @@ func (w *compareExecutionClient) RecordBlockCreation(ctx context.Context, index 
 	// if index == 350_159 {
 	externalRes, externalErr := w.nethermindExecutionClient.RecordBlockCreation(ctx, index, msg, wasmTargets)
 
-	if err := compareRecordResult("RecordBlockCreation", internalRes, internalErr, externalRes, externalErr); err != nil {
+	if err := compareRecordResult("RecordBlockCreation", internalRes, internalErr, externalRes, externalErr, index); err != nil {
 		// Send to fatal error channel for graceful shutdown
 		select {
 		case w.fatalErrChan <- fmt.Errorf("compareExecutionClient RecordBlockCreation: %s", err.Error()):
