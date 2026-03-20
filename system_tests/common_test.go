@@ -126,15 +126,23 @@ type ExecutionConfig struct {
 
 // getExecutionMode returns the configured execution mode from env vars or flags
 func getExecutionMode() ExecutionMode {
+	var mode ExecutionMode
 	// Environment variable takes precedence
-	if mode := os.Getenv("NITRO_EXECUTION_MODE"); mode != "" {
-		return ExecutionMode(mode)
+	if envMode := os.Getenv("NITRO_EXECUTION_MODE"); envMode != "" {
+		mode = ExecutionMode(envMode)
+	} else if testflag.ExecutionMode != nil && *testflag.ExecutionMode != "" {
+		// Fall back to test flag
+		mode = ExecutionMode(*testflag.ExecutionMode)
+	} else {
+		return ExecutionModeInternal // Default
 	}
-	// Fall back to test flag
-	if testflag.ExecutionMode != nil && *testflag.ExecutionMode != "" {
-		return ExecutionMode(*testflag.ExecutionMode)
+	switch mode {
+	case ExecutionModeInternal, ExecutionModeSelf, ExecutionModeExternal, ExecutionModeComparison:
+		return mode
+	default:
+		panic(fmt.Sprintf("unknown execution mode: %q (valid: %s, %s, %s, %s)",
+			mode, ExecutionModeInternal, ExecutionModeSelf, ExecutionModeExternal, ExecutionModeComparison))
 	}
-	return ExecutionModeInternal // Default
 }
 
 // getExecutionConfig returns the full execution configuration
@@ -167,6 +175,33 @@ func getExecutionConfig() ExecutionConfig {
 // isExternalExecutionMode returns true if mode requires external EL
 func isExternalExecutionMode(mode ExecutionMode) bool {
 	return mode == ExecutionModeExternal || mode == ExecutionModeComparison
+}
+
+// forwardInitToComparisonSecondary registers a t.Cleanup hook that reports
+// accumulated comparison errors, fetches the expected init result from the
+// primary, and forwards the provided init message to the secondary for
+// comparison. Called from both BuildL2OnL1 and BuildL2 after the comparison
+// client is detected.
+func forwardInitToComparisonSecondary(
+	t *testing.T,
+	ctx context.Context,
+	comparisonClient *comparisonrpcclient.ComparisonClient,
+	initMsg *arbostypes.MessageWithMetadata,
+) {
+	t.Helper()
+	t.Cleanup(func() {
+		if comparisonClient.HasErrors() {
+			for _, err := range comparisonClient.Errors() {
+				t.Errorf("Comparison mismatch: %v", err)
+			}
+		}
+	})
+
+	expectedResult, err := comparisonClient.PrimaryResultAtMessageIndex(0).Await(ctx)
+	Require(t, err, "Failed to get init result from primary")
+
+	_, err = comparisonClient.ForwardInitToSecondary(initMsg, expectedResult)
+	Require(t, err, "Init message comparison failed")
 }
 
 // applyExecutionMode configures nodeConfig based on execution mode
@@ -1105,21 +1140,9 @@ func (b *NodeBuilder) BuildL2OnL1(t *testing.T) func() {
 
 	// If in comparison mode with UseInternalSequencer, forward the init message to secondary
 	if comparisonClient, ok := b.L2.ConsensusNode.ExecutionClient.(*comparisonrpcclient.ComparisonClient); ok {
-		// Get expected result from primary only (not through comparison, since secondary isn't initialized yet)
-		expectedResult, err := comparisonClient.PrimaryResultAtMessageIndex(0).Await(b.ctx)
-		Require(t, err, "Failed to get init result from primary")
-
-		// Debug: Log the init message content
-		t.Logf("BuildL2OnL1: Init message from L1 deployment:")
-		t.Logf("  ChainId: %s", b.initMessage.ChainId.String())
-		t.Logf("  InitialL1BaseFee: %s", b.initMessage.InitialL1BaseFee.String())
-		t.Logf("  SerializedChainConfig: %s", string(b.initMessage.SerializedChainConfig))
-		t.Logf("  Expected BlockHash from geth: %s", expectedResult.BlockHash.Hex())
-
-		// Use the REAL init message from L1 deployment (b.initMessage) instead of reconstructing
-		// This ensures Nethermind gets the exact same init message that geth used
+		// Use the REAL init message from L1 deployment (b.initMessage) instead of reconstructing.
 		// Format: chainId(32) + version(1) + basefee(32) + serializedChainConfig
-		// Version 1 includes the basefee; version 0 uses default
+		// Version 1 includes the basefee; version 0 uses default.
 		chainIdBytes := arbmath.U256Bytes(b.initMessage.ChainId)
 		baseFeeBytes := arbmath.U256Bytes(b.initMessage.InitialL1BaseFee)
 		l2msg := append(chainIdBytes, 1) // version 1
@@ -1136,8 +1159,7 @@ func (b *NodeBuilder) BuildL2OnL1(t *testing.T) func() {
 			},
 			DelayedMessagesRead: 1,
 		}
-		_, err = comparisonClient.ForwardInitToSecondary(initMsg, expectedResult).Await(b.ctx)
-		Require(t, err, "Init message comparison failed")
+		forwardInitToComparisonSecondary(t, b.ctx, comparisonClient, initMsg)
 	}
 
 	_, hasOwnerAccount := b.L2Info.Accounts["Owner"]
@@ -1229,12 +1251,7 @@ func (b *NodeBuilder) BuildL2(t *testing.T) func() {
 
 	// If in comparison mode with UseInternalSequencer, forward the init message to secondary
 	if comparisonClient, ok := b.L2.ConsensusNode.ExecutionClient.(*comparisonrpcclient.ComparisonClient); ok {
-		// Get expected result from primary only (not through comparison, since secondary isn't initialized yet)
-		expectedResult, err := comparisonClient.PrimaryResultAtMessageIndex(0).Await(b.ctx)
-		Require(t, err, "Failed to get init result from primary")
-
 		// Reconstruct the init message (same logic as AddFakeInitMessage)
-		// IMPORTANT: Use non-zero L1BaseFee for secondary EL (Nethermind requires it)
 		chainConfigJson, err := json.Marshal(b.chainConfig)
 		Require(t, err)
 		chainIdBytes := arbmath.U256Bytes(b.chainConfig.ChainID)
@@ -1250,8 +1267,7 @@ func (b *NodeBuilder) BuildL2(t *testing.T) func() {
 			},
 			DelayedMessagesRead: 1,
 		}
-		_, err = comparisonClient.ForwardInitToSecondary(initMsg, expectedResult).Await(b.ctx)
-		Require(t, err, "Init message comparison failed")
+		forwardInitToComparisonSecondary(t, b.ctx, comparisonClient, initMsg)
 	}
 
 	b.L2.Client = ClientForStack(t, b.L2.Stack, clientForStackUseHTTP(b.l2StackConfig))

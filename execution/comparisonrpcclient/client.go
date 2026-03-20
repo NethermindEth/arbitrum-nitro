@@ -34,6 +34,10 @@ type ComparisonClient struct {
 	// forwardMu serializes DigestMessageWithExpected calls to ensure ordered
 	// message delivery to Nethermind (which processes blocks sequentially)
 	forwardMu sync.Mutex
+
+	// errorsMu protects errors slice for concurrent access from comparison goroutines
+	errorsMu sync.Mutex
+	errors   []error
 }
 
 func NewComparisonClient(
@@ -44,11 +48,12 @@ func NewComparisonClient(
 ) *ComparisonClient {
 	primary := executionrpcclient.NewClient(primaryConfig, stack)
 	secondary := executionrpcclient.NewClient(secondaryConfig, nil)
-	return &ComparisonClient{
-		primary:    primary,
-		secondary:  secondary,
-		comparator: NewComparator(fatalErrChan, primary, secondary),
+	cc := &ComparisonClient{
+		primary:   primary,
+		secondary: secondary,
 	}
+	cc.comparator = NewComparator(fatalErrChan, cc.RecordError, primary, secondary)
+	return cc
 }
 
 func (c *ComparisonClient) Start(ctx context.Context) error {
@@ -64,9 +69,34 @@ func (c *ComparisonClient) Start(ctx context.Context) error {
 }
 
 func (c *ComparisonClient) StopAndWait() {
+	// Cancel own context first so in-flight goroutines see ctx.Done(),
+	// then stop children that those goroutines depend on.
+	c.StopWaiter.StopAndWait()
 	c.primary.StopAndWait()
 	c.secondary.StopAndWait()
-	c.StopWaiter.StopAndWait()
+}
+
+// RecordError records a comparison error for later retrieval via Errors().
+func (c *ComparisonClient) RecordError(err error) {
+	c.errorsMu.Lock()
+	defer c.errorsMu.Unlock()
+	c.errors = append(c.errors, err)
+}
+
+// HasErrors returns true if any comparison mismatches were recorded.
+func (c *ComparisonClient) HasErrors() bool {
+	c.errorsMu.Lock()
+	defer c.errorsMu.Unlock()
+	return len(c.errors) > 0
+}
+
+// Errors returns a copy of all recorded comparison errors.
+func (c *ComparisonClient) Errors() []error {
+	c.errorsMu.Lock()
+	defer c.errorsMu.Unlock()
+	result := make([]error, len(c.errors))
+	copy(result, c.errors)
+	return result
 }
 
 // ForwardToSecondary forwards a message to only the secondary execution client
@@ -74,23 +104,24 @@ func (c *ComparisonClient) StopAndWait() {
 // This is used when UseInternalSequencer is true - the primary (internal) already
 // processed the block, so we only need to forward to secondary and compare.
 // Uses a mutex to serialize calls since Nethermind processes blocks sequentially.
+// Synchronous — holds forwardMu for the duration of the call.
 func (c *ComparisonClient) ForwardToSecondary(
 	msgIdx arbutil.MessageIndex,
 	msg *arbostypes.MessageWithMetadata,
 	expectedResult *execution.MessageResult,
-) containers.PromiseInterface[*execution.MessageResult] {
+) (*execution.MessageResult, error) {
 	// Serialize secondary calls to avoid "mutex held" errors from Nethermind
 	c.forwardMu.Lock()
 	defer c.forwardMu.Unlock()
 
 	secondaryPromise := c.secondary.DigestMessage(msgIdx, msg, nil)
-	return containers.NewReadyPromise(c.comparator.CompareWithExpected(
+	return c.comparator.CompareWithExpected(
 		c.GetContext(),
 		"ForwardToSecondary",
 		msgIdx,
 		expectedResult,
 		secondaryPromise,
-	))
+	)
 }
 
 // PrimaryResultAtMessageIndex returns the result from the primary execution client only,
@@ -103,19 +134,20 @@ func (c *ComparisonClient) PrimaryResultAtMessageIndex(msgIdx arbutil.MessageInd
 // execution client and compares the result with the expected result from the primary.
 // This is used when UseInternalSequencer is true to initialize the secondary with
 // the same genesis state as the primary and verify they match.
+// Synchronous — blocks until the secondary processes the init message.
 func (c *ComparisonClient) ForwardInitToSecondary(
 	msg *arbostypes.MessageWithMetadata,
 	expectedResult *execution.MessageResult,
-) containers.PromiseInterface[*execution.MessageResult] {
+) (*execution.MessageResult, error) {
 	log.Info("Forwarding init message to secondary execution client with comparison")
 	secondaryPromise := c.secondary.DigestMessage(0, msg, nil)
-	return containers.NewReadyPromise(c.comparator.CompareWithExpected(
+	return c.comparator.CompareWithExpected(
 		c.GetContext(),
 		"ForwardInitToSecondary",
 		0,
 		expectedResult,
 		secondaryPromise,
-	))
+	)
 }
 
 func (c *ComparisonClient) DigestMessage(
@@ -160,22 +192,24 @@ func (c *ComparisonClient) DigestMessageWithExpected(
 			SecondaryErr: secondaryErr,
 		}
 		printMismatchReport(report)
-		sendFatalError(report, c.comparator.fatalErrChan)
+		sendFatalError(report, c.comparator.fatalErrChan, c.comparator.errorRecorder)
 		return secondaryErr
 	}
 
 	// Compare block hash (consensus-critical)
 	if err := compare(expectedResult, secondaryResult); err != nil {
+		mismatchErr := fmt.Errorf("comparison mismatch at msgIdx %d: %w", msgIdx, err)
 		report := MismatchReport{
 			Method: "DigestMessageWithExpected",
 			MsgIdx: &msgIdx,
 			Diff:   err,
 		}
 		printMismatchReport(report)
-		sendFatalError(report, c.comparator.fatalErrChan)
-		return fmt.Errorf("comparison mismatch at msgIdx %d: %w", msgIdx, err)
+		sendFatalError(report, c.comparator.fatalErrChan, c.comparator.errorRecorder)
+		return mismatchErr
 	}
 
+	log.Info("Comparison passed: block hash match", "method", "DigestMessageWithExpected", "msgIdx", msgIdx)
 	return nil
 }
 

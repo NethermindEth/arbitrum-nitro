@@ -553,6 +553,13 @@ func (n *ExecutionNode) IsTxHashInOnchainFilter(txHash common.Hash) (bool, error
 func (n *ExecutionNode) ResultAtMessageIndex(msgIdx arbutil.MessageIndex) containers.PromiseInterface[*execution.MessageResult] {
 	return containers.NewReadyPromise(n.ExecEngine.ResultAtMessageIndex(msgIdx))
 }
+
+// SetRPCContext delegates to the underlying ExecutionEngine for per-request
+// RPC context injection. Implements rpcContextSetter used by rpcserver.Server.
+func (n *ExecutionNode) SetRPCContext(ctx context.Context) {
+	n.ExecEngine.SetRPCContext(ctx)
+}
+
 func (n *ExecutionNode) ArbOSVersionForMessageIndex(msgIdx arbutil.MessageIndex) containers.PromiseInterface[uint64] {
 	return n.ExecEngine.ArbOSVersionForMessageIndex(msgIdx)
 }

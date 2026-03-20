@@ -136,6 +136,9 @@ func (c *Config) Validate() error {
 	if err := c.ExecutionRPCClient.Validate(); err != nil {
 		return fmt.Errorf("error validating Client config: %w", err)
 	}
+	if c.ComparisonExecution.UseInternalSequencer && !c.ComparisonExecution.Enable {
+		return errors.New("use-internal-sequencer requires comparison execution to be enabled")
+	}
 	if c.ComparisonExecution.Enable {
 		// When UseInternalSequencer is true, "self" URLs are allowed - the internal node exposes its EL via websocket
 		// and the RPC client resolves "self" to stack.WSEndpoint() with dynamic port allocation
@@ -1748,7 +1751,9 @@ func (n *Node) WriteMessageFromSequencer(pos arbutil.MessageIndex, msgWithMeta a
 	// Receipt comparison is skipped to avoid deadlock (block not yet committed to primary RPC).
 	if n.ComparisonHandler != nil {
 		if err := n.ComparisonHandler.DigestMessageWithExpected(pos, &msgWithMeta, &msgResult); err != nil {
-			log.Error("Comparison mismatch in DigestMessageWithExpected", "pos", pos, "err", err)
+			// Mismatch already reported via fatalErrChan and error recorder inside
+			// DigestMessageWithExpected. Log at debug level for traceability without noise.
+			log.Debug("Comparison secondary diverged", "pos", pos, "err", err)
 		}
 	}
 

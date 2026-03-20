@@ -52,7 +52,6 @@ import (
 	"github.com/offchainlabs/nitro/consensus"
 	"github.com/offchainlabs/nitro/execution"
 	"github.com/offchainlabs/nitro/execution/gethexec/eventfilter"
-	"github.com/offchainlabs/nitro/execution/rpccontext"
 	"github.com/offchainlabs/nitro/util/arbmath"
 	"github.com/offchainlabs/nitro/util/containers"
 	"github.com/offchainlabs/nitro/util/sharedmetrics"
@@ -216,6 +215,11 @@ type ExecutionEngine struct {
 
 	exposeMultiGas        bool
 	exposeMetadataHeaders bool
+
+	// rpcCtx holds the current RPC request context for HTTP header injection.
+	// Per-instance field replaces the former global rpccontext package.
+	// Only valid during an RPC call protected by createBlocksMutex.
+	rpcCtx atomic.Value // stores context.Context
 
 	runningMaintenance atomic.Bool
 
@@ -986,6 +990,26 @@ func (s *ExecutionEngine) appendBlock(block *types.Block, statedb *state.StateDB
 // HeaderGasUsed is the HTTP header name for exposing block gas usage.
 const HeaderGasUsed = "X-Arb-Gas-Used"
 
+// SetRPCContext sets the current RPC request context for header injection.
+// Called by the RPC server layer before execution methods.
+func (s *ExecutionEngine) SetRPCContext(ctx context.Context) {
+	if ctx == nil {
+		s.rpcCtx = atomic.Value{} // clear
+		return
+	}
+	s.rpcCtx.Store(ctx)
+}
+
+// getRPCContext returns the current RPC request context, or nil if not set.
+func (s *ExecutionEngine) getRPCContext() context.Context {
+	if v := s.rpcCtx.Load(); v != nil {
+		if ctx, ok := v.(context.Context); ok {
+			return ctx
+		}
+	}
+	return nil
+}
+
 func (s *ExecutionEngine) resultFromHeader(header *types.Header) (*execution.MessageResult, error) {
 	if header == nil {
 		return nil, ResultNotFound
@@ -994,7 +1018,7 @@ func (s *ExecutionEngine) resultFromHeader(header *types.Header) (*execution.Mes
 
 	// Set HTTP header directly, like Nethermind's SetMetadataHeaders
 	if s.exposeMetadataHeaders {
-		if ctx := rpccontext.Current(); ctx != nil {
+		if ctx := s.getRPCContext(); ctx != nil {
 			node.SetResponseHeader(ctx, HeaderGasUsed, strconv.FormatUint(header.GasUsed, 10))
 		}
 	}

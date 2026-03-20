@@ -10,8 +10,13 @@ import (
 	"github.com/offchainlabs/nitro/arbos/arbostypes"
 	"github.com/offchainlabs/nitro/arbutil"
 	"github.com/offchainlabs/nitro/execution"
-	"github.com/offchainlabs/nitro/execution/rpccontext"
 )
+
+// rpcContextSetter is implemented by execution clients that support
+// per-request RPC context injection for HTTP header metadata.
+type rpcContextSetter interface {
+	SetRPCContext(ctx context.Context)
+}
 
 type Server struct {
 	executionClient   execution.ExecutionClient
@@ -22,13 +27,29 @@ func NewServer(executionClient execution.ExecutionClient, executionRecorder exec
 	return &Server{executionClient, executionRecorder}
 }
 
+// setRPCContext injects the RPC request context if the execution client supports it.
+func (c *Server) setRPCContext(ctx context.Context) {
+	if setter, ok := c.executionClient.(rpcContextSetter); ok {
+		setter.SetRPCContext(ctx)
+	}
+}
+
+// clearRPCContext clears the RPC request context after the call completes.
+func (c *Server) clearRPCContext() {
+	if setter, ok := c.executionClient.(rpcContextSetter); ok {
+		setter.SetRPCContext(nil)
+	}
+}
+
 func (c *Server) DigestMessage(ctx context.Context, msgIdx arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata, msgForPrefetch *arbostypes.MessageWithMetadata) (*execution.MessageResult, error) {
-	rpccontext.SetCurrent(ctx)
+	c.setRPCContext(ctx)
+	defer c.clearRPCContext()
 	return c.executionClient.DigestMessage(msgIdx, msg, msgForPrefetch).Await(ctx)
 }
 
 func (c *Server) Reorg(ctx context.Context, msgIdxOfFirstMsgToAdd arbutil.MessageIndex, newMessages []arbostypes.MessageWithMetadataAndBlockInfo, oldMessages []*arbostypes.MessageWithMetadata) ([]*execution.MessageResult, error) {
-	rpccontext.SetCurrent(ctx)
+	c.setRPCContext(ctx)
+	defer c.clearRPCContext()
 	return c.executionClient.Reorg(msgIdxOfFirstMsgToAdd, newMessages, oldMessages).Await(ctx)
 }
 
@@ -37,7 +58,8 @@ func (c *Server) HeadMessageIndex(ctx context.Context) (arbutil.MessageIndex, er
 }
 
 func (c *Server) ResultAtMessageIndex(ctx context.Context, msgIdx arbutil.MessageIndex) (*execution.MessageResult, error) {
-	rpccontext.SetCurrent(ctx)
+	c.setRPCContext(ctx)
+	defer c.clearRPCContext()
 	return c.executionClient.ResultAtMessageIndex(msgIdx).Await(ctx)
 }
 

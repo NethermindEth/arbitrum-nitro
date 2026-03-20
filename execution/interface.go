@@ -72,6 +72,10 @@ type ExecutionClientWithComparison interface {
 	// DigestMessageWithExpected processes a message and compares with an expected result.
 	// Used when UseInternalSequencer is true - the primary already processed the block.
 	DigestMessageWithExpected(msgIdx arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata, expectedResult *MessageResult) error
+	// HasErrors returns true if any comparison mismatches were recorded.
+	HasErrors() bool
+	// Errors returns a copy of all recorded comparison errors.
+	Errors() []error
 }
 
 // needed for validators / stakers
