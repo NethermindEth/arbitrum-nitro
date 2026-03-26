@@ -169,7 +169,9 @@ func (c *ComparisonClient) DigestMessage(
 // Used when UseInternalSequencer is true - the primary already processed the block,
 // so we only need to forward to secondary and compare.
 // This method is synchronous and serialized to ensure ordered message delivery.
-// Note: Receipt comparison is skipped to avoid deadlock (block not yet committed to primary).
+// Receipt comparison runs asynchronously — a block commit waiter is registered and the
+// goroutine waits for NotifyBlockCommitted (called after appendBlock) before fetching
+// primary receipts, avoiding the need for polling.
 func (c *ComparisonClient) DigestMessageWithExpected(
 	msgIdx arbutil.MessageIndex,
 	msg *arbostypes.MessageWithMetadata,
@@ -196,6 +198,15 @@ func (c *ComparisonClient) DigestMessageWithExpected(
 		return secondaryErr
 	}
 
+	// Register a waiter for the block commit notification before launching the goroutine.
+	// The block will be committed to primary's DB shortly after this method returns
+	// (appendBlock runs after WriteMessageFromSequencer, then NotifyBlockCommitted fires).
+	// StopWaiter.LaunchThread ensures the goroutine is tracked and waited on during shutdown.
+	blockReady := c.comparator.RegisterBlockWaiter(expectedResult.BlockHash)
+	c.LaunchThread(func(ctx context.Context) {
+		c.comparator.compareReceiptsForResult(ctx, "DigestMessageWithExpected", msgIdx, expectedResult, blockReady)
+	})
+
 	// Compare block hash (consensus-critical)
 	if err := compare(expectedResult, secondaryResult); err != nil {
 		mismatchErr := fmt.Errorf("comparison mismatch at msgIdx %d: %w", msgIdx, err)
@@ -211,6 +222,13 @@ func (c *ComparisonClient) DigestMessageWithExpected(
 
 	log.Info("Comparison passed: block hash match", "method", "DigestMessageWithExpected", "msgIdx", msgIdx)
 	return nil
+}
+
+// NotifyBlockCommitted signals that a block has been committed to the primary's database.
+// Called by the execution engine after appendBlock succeeds, unblocking async receipt
+// comparison goroutines that are waiting for this block hash.
+func (c *ComparisonClient) NotifyBlockCommitted(blockHash common.Hash) {
+	c.comparator.NotifyBlockCommitted(blockHash)
 }
 
 func (c *ComparisonClient) Reorg(

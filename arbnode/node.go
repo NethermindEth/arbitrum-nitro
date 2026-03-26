@@ -1748,7 +1748,8 @@ func (n *Node) WriteMessageFromSequencer(pos arbutil.MessageIndex, msgWithMeta a
 	// When using comparison mode with internal sequencer, forward the message to the secondary
 	// for comparison. The primary (internal) already processed it, so we only need to compare.
 	// This is synchronous and serialized to ensure ordered message delivery to Nethermind.
-	// Receipt comparison is skipped to avoid deadlock (block not yet committed to primary RPC).
+	// Receipt comparison runs asynchronously — the goroutine waits for NotifyBlockCommitted
+	// (called by ExecutionEngine after appendBlock) before fetching primary receipts.
 	if n.ComparisonHandler != nil {
 		if err := n.ComparisonHandler.DigestMessageWithExpected(pos, &msgWithMeta, &msgResult); err != nil {
 			// Mismatch already reported via fatalErrChan and error recorder inside
@@ -1758,6 +1759,15 @@ func (n *Node) WriteMessageFromSequencer(pos arbutil.MessageIndex, msgWithMeta a
 	}
 
 	return containers.NewReadyPromise(struct{}{}, nil)
+}
+
+// NotifyBlockCommitted implements consensus.BlockCommitNotifier.
+// Called by the execution engine after appendBlock succeeds.
+// Delegates to the comparison handler to unblock async receipt comparison goroutines.
+func (n *Node) NotifyBlockCommitted(blockHash common.Hash) {
+	if n.ComparisonHandler != nil {
+		n.ComparisonHandler.NotifyBlockCommitted(blockHash)
+	}
 }
 
 func (n *Node) ExpectChosenSequencer() containers.PromiseInterface[struct{}] {

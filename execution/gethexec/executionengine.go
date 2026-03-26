@@ -725,6 +725,11 @@ func (s *ExecutionEngine) sequenceTransactionsWithBlockMutex(header *arbostypes.
 	if err != nil {
 		return nil, err
 	}
+	// Notify comparison handler that the block is committed to the database,
+	// so async receipt comparison goroutines can fetch primary receipts via RPC.
+	if notifier, ok := s.consensus.(consensus.BlockCommitNotifier); ok {
+		notifier.NotifyBlockCommitted(block.Hash())
+	}
 	s.cacheL1PriceDataOfMsg(msgIdx, block, false)
 
 	return block, nil
@@ -801,6 +806,11 @@ func (s *ExecutionEngine) sequenceDelayedMessageWithBlockMutex(message *arbostyp
 	err = s.appendBlock(block, statedb, receipts, blockCalcTime)
 	if err != nil {
 		return nil, err
+	}
+	// Notify comparison handler that the block is committed to the database,
+	// so async receipt comparison goroutines can fetch primary receipts via RPC.
+	if notifier, ok := s.consensus.(consensus.BlockCommitNotifier); ok {
+		notifier.NotifyBlockCommitted(block.Hash())
 	}
 	s.cacheL1PriceDataOfMsg(msgIdx, block, true)
 

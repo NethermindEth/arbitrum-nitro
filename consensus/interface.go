@@ -39,3 +39,11 @@ type FullConsensusClient interface {
 	ConsensusInfo
 	ConsensusSequencer
 }
+
+// BlockCommitNotifier is an optional interface for consensus clients that support
+// notifying when a sequencer block has been committed to the database.
+// Used by comparison mode: the async receipt comparison goroutine waits for this
+// notification instead of polling, since DigestMessageWithExpected runs before appendBlock.
+type BlockCommitNotifier interface {
+	NotifyBlockCommitted(blockHash common.Hash)
+}

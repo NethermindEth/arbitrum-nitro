@@ -72,6 +72,9 @@ type ExecutionClientWithComparison interface {
 	// DigestMessageWithExpected processes a message and compares with an expected result.
 	// Used when UseInternalSequencer is true - the primary already processed the block.
 	DigestMessageWithExpected(msgIdx arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata, expectedResult *MessageResult) error
+	// NotifyBlockCommitted signals that a block has been committed to the primary's database.
+	// Called after appendBlock succeeds so async receipt comparison can fetch primary receipts.
+	NotifyBlockCommitted(blockHash common.Hash)
 	// HasErrors returns true if any comparison mismatches were recorded.
 	HasErrors() bool
 	// Errors returns a copy of all recorded comparison errors.

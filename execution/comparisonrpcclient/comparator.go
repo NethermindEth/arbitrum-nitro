@@ -8,6 +8,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
@@ -51,16 +52,56 @@ type Comparator struct {
 	primary        *executionrpcclient.Client
 	secondary      *executionrpcclient.Client
 	compareHeaders bool // Whether to compare response headers
+
+	// blockCommitMu protects blockCommitWaiters for concurrent access from
+	// async receipt comparison goroutines and NotifyBlockCommitted calls.
+	blockCommitMu      sync.Mutex
+	blockCommitWaiters map[common.Hash]chan struct{}
 }
 
 // NewComparator creates a new Comparator
 func NewComparator(fatalErrChan chan<- error, errorRecorder func(error), primary, secondary *executionrpcclient.Client) *Comparator {
 	return &Comparator{
-		fatalErrChan:   fatalErrChan,
-		errorRecorder:  errorRecorder,
-		primary:        primary,
-		secondary:      secondary,
-		compareHeaders: primary.CapturedHeaders() != nil && secondary.CapturedHeaders() != nil,
+		fatalErrChan:       fatalErrChan,
+		errorRecorder:      errorRecorder,
+		primary:            primary,
+		secondary:          secondary,
+		compareHeaders:     primary.CapturedHeaders() != nil && secondary.CapturedHeaders() != nil,
+		blockCommitWaiters: make(map[common.Hash]chan struct{}),
+	}
+}
+
+// RegisterBlockWaiter creates a channel that will be closed when NotifyBlockCommitted
+// is called for the given block hash. If the notification already arrived, returns
+// a pre-closed channel that selects immediately.
+func (c *Comparator) RegisterBlockWaiter(blockHash common.Hash) <-chan struct{} {
+	c.blockCommitMu.Lock()
+	defer c.blockCommitMu.Unlock()
+
+	ch, exists := c.blockCommitWaiters[blockHash]
+	if exists {
+		// Notification arrived before waiter registered — channel already closed
+		return ch
+	}
+	ch = make(chan struct{})
+	c.blockCommitWaiters[blockHash] = ch
+	return ch
+}
+
+// NotifyBlockCommitted signals that a block has been committed to the primary's database.
+// Async receipt comparison goroutines waiting on this block hash will unblock.
+func (c *Comparator) NotifyBlockCommitted(blockHash common.Hash) {
+	c.blockCommitMu.Lock()
+	defer c.blockCommitMu.Unlock()
+
+	ch, exists := c.blockCommitWaiters[blockHash]
+	if exists {
+		close(ch)
+	} else {
+		// Notification arrived before waiter registered — store a pre-closed channel
+		ch = make(chan struct{})
+		close(ch)
+		c.blockCommitWaiters[blockHash] = ch
 	}
 }
 
@@ -200,7 +241,7 @@ func (c *Comparator) CompareWithExpected(
 		log.Info("Comparison passed: block hash match", "method", method, "msgIdx", msgIdx)
 		// Block hashes match - also compare receipts to validate MultiGasUsed
 		// (MultiGasUsed is not part of consensus encoding, so block hash doesn't validate it)
-		c.compareReceiptsForResult(ctx, method, msgIdx, expectedResult)
+		c.compareReceiptsForResult(ctx, method, msgIdx, expectedResult, nil)
 	}
 
 	return expectedResult, nil
@@ -234,7 +275,7 @@ func (c *Comparator) CompareMessageResult(
 				log.Info("Comparison passed: block hash match", "method", method, "msgIdx", msgIdx)
 				// Block hashes match - also compare receipts to validate MultiGasUsed
 				// (MultiGasUsed is not part of consensus encoding, so block hash doesn't validate it)
-				c.compareReceiptsForResult(ctx, method, msgIdx, primaryResult)
+				c.compareReceiptsForResult(ctx, method, msgIdx, primaryResult, nil)
 			}
 		}
 
@@ -601,11 +642,17 @@ func (c *Comparator) compareBlock(
 // compareReceiptsForResult fetches and compares receipts from both clients after a successful
 // DigestMessage. This validates MultiGasUsed which is NOT part of the consensus receipt encoding
 // and therefore not validated by block hash comparison.
+//
+// blockReady is an optional channel that, when non-nil, is waited on before fetching primary
+// receipts. This is used when the block hasn't been committed to the primary's database yet
+// (UseInternalSequencer mode where DigestMessageWithExpected runs before appendBlock).
+// When nil, the block is assumed to already be committed (non-internal-sequencer paths).
 func (c *Comparator) compareReceiptsForResult(
 	ctx context.Context,
 	method string,
 	msgIdx arbutil.MessageIndex,
 	result *execution.MessageResult,
+	blockReady <-chan struct{},
 ) {
 	if c.primary == nil || c.secondary == nil || result == nil {
 		return
@@ -614,35 +661,36 @@ func (c *Comparator) compareReceiptsForResult(
 		return
 	}
 
-	// Fetch receipts from both clients using block hash directly.
-	// Using hash instead of number because newly produced blocks are indexed by hash
-	// immediately, but the number-to-hash mapping may lag behind.
-	//
-	// When UseInternalSequencer is true, the block is produced internally before
-	// the RPC server indexes it. We retry a few times with small delays to allow
-	// the RPC server to catch up. In internal sequencer mode, blocks may take
-	// longer to be committed to the database, so we need a longer retry window.
-	var primaryReceipts []*types.Receipt
-	var primaryErr error
-	const maxRetries = 50
-	const retryDelay = 200 * time.Millisecond
-
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		primaryReceipts, primaryErr = c.primary.GetBlockReceiptsByHash(result.BlockHash).Await(ctx)
-		if primaryErr == nil {
-			// Block found - accept whatever receipts we got (even 0 for blocks with no transactions)
-			break
-		}
-		// Block not found yet - RPC server might not have indexed it
-		if attempt < maxRetries-1 {
-			select {
-			case <-ctx.Done():
-				return // shutdown — don't report mismatch
-			case <-time.After(retryDelay):
-			}
+	// Wait for the block to be committed to primary's database if needed.
+	// In UseInternalSequencer mode, DigestMessageWithExpected runs before appendBlock,
+	// so we wait for the NotifyBlockCommitted signal rather than polling.
+	if blockReady != nil {
+		const blockCommitTimeout = 30 * time.Second
+		select {
+		case <-blockReady:
+			// Block committed — clean up waiter entry
+			c.blockCommitMu.Lock()
+			delete(c.blockCommitWaiters, result.BlockHash)
+			c.blockCommitMu.Unlock()
+		case <-time.After(blockCommitTimeout):
+			log.Error("Timed out waiting for block commit notification",
+				"method", method, "msgIdx", msgIdx, "blockHash", result.BlockHash.Hex()[:10])
+			c.blockCommitMu.Lock()
+			delete(c.blockCommitWaiters, result.BlockHash)
+			c.blockCommitMu.Unlock()
+			return
+		case <-ctx.Done():
+			c.blockCommitMu.Lock()
+			delete(c.blockCommitWaiters, result.BlockHash)
+			c.blockCommitMu.Unlock()
+			return // shutdown — don't report mismatch
 		}
 	}
 
+	// Fetch receipts from both clients using block hash directly.
+	// Using hash instead of number because newly produced blocks are indexed by hash
+	// immediately, but the number-to-hash mapping may lag behind.
+	primaryReceipts, primaryErr := c.primary.GetBlockReceiptsByHash(result.BlockHash).Await(ctx)
 	secondaryReceipts, secondaryErr := c.secondary.GetBlockReceiptsByHash(result.BlockHash).Await(ctx)
 
 	// Fail if primary receipts are unavailable but secondary has receipts
@@ -651,7 +699,7 @@ func (c *Comparator) compareReceiptsForResult(
 		report := MismatchReport{
 			Method: method + " (receipts)",
 			MsgIdx: &msgIdx,
-			Diff:   fmt.Errorf("primary receipts unavailable for block %s after %d retries (secondary has %d receipts)", result.BlockHash.Hex()[:10], maxRetries, len(secondaryReceipts)),
+			Diff:   fmt.Errorf("primary returned 0 receipts for block %s (secondary has %d receipts)", result.BlockHash.Hex()[:10], len(secondaryReceipts)),
 		}
 		printMismatchReport(report)
 		sendFatalError(report, c.fatalErrChan, c.errorRecorder)
