@@ -47,6 +47,7 @@ import (
 	"github.com/offchainlabs/nitro/daprovider/data_streaming"
 	"github.com/offchainlabs/nitro/execution"
 	executionrpcclient "github.com/offchainlabs/nitro/execution/rpcclient"
+	"github.com/offchainlabs/nitro/nethermind/comparison"
 	"github.com/offchainlabs/nitro/solgen/go/bridgegen"
 	"github.com/offchainlabs/nitro/solgen/go/node_interfacegen"
 	"github.com/offchainlabs/nitro/solgen/go/precompilesgen"
@@ -82,18 +83,19 @@ type Config struct {
 	Bold              bold.BoldConfig                   `koanf:"bold"`
 	SeqCoordinator    SeqCoordinatorConfig              `koanf:"seq-coordinator"`
 	// Deprecated: Use DA.AnyTrust instead. Will be removed in a future release.
-	DataAvailability         anytrust.Config                  `koanf:"data-availability"`
-	DA                       daconfig.DAConfig                `koanf:"da" reload:"hot"`
-	SyncMonitor              SyncMonitorConfig                `koanf:"sync-monitor"`
-	Dangerous                DangerousConfig                  `koanf:"dangerous"`
-	TransactionStreamer      TransactionStreamerConfig        `koanf:"transaction-streamer" reload:"hot"`
-	Maintenance              MaintenanceConfig                `koanf:"maintenance" reload:"hot"`
-	ResourceMgmt             resourcemanager.Config           `koanf:"resource-mgmt" reload:"hot"`
-	BlockMetadataFetcher     BlockMetadataFetcherConfig       `koanf:"block-metadata-fetcher" reload:"hot"`
-	ConsensusExecutionSyncer ConsensusExecutionSyncerConfig   `koanf:"consensus-execution-syncer"`
-	RPCServer                rpcserver.Config                 `koanf:"rpc-server"`
-	ExecutionRPCClient       rpcclient.ClientConfig           `koanf:"execution-rpc-client" reload:"hot"`
-	VersionAlerterServer     nitroversionalerter.ServerConfig `koanf:"version-alerter-server" reload:"hot"`
+	DataAvailability         anytrust.Config                      `koanf:"data-availability"`
+	DA                       daconfig.DAConfig                    `koanf:"da" reload:"hot"`
+	SyncMonitor              SyncMonitorConfig                    `koanf:"sync-monitor"`
+	Dangerous                DangerousConfig                      `koanf:"dangerous"`
+	TransactionStreamer      TransactionStreamerConfig            `koanf:"transaction-streamer" reload:"hot"`
+	Maintenance              MaintenanceConfig                    `koanf:"maintenance" reload:"hot"`
+	ResourceMgmt             resourcemanager.Config               `koanf:"resource-mgmt" reload:"hot"`
+	BlockMetadataFetcher     BlockMetadataFetcherConfig           `koanf:"block-metadata-fetcher" reload:"hot"`
+	ConsensusExecutionSyncer ConsensusExecutionSyncerConfig       `koanf:"consensus-execution-syncer"`
+	RPCServer                rpcserver.Config                     `koanf:"rpc-server"`
+	ExecutionRPCClient       rpcclient.ClientConfig               `koanf:"execution-rpc-client" reload:"hot"`
+	ComparisonExecution      comparison.ComparisonExecutionConfig `koanf:"comparison-execution"`
+	VersionAlerterServer     nitroversionalerter.ServerConfig     `koanf:"version-alerter-server" reload:"hot"`
 }
 
 func (c *Config) Validate() error {
@@ -139,6 +141,11 @@ func (c *Config) Validate() error {
 	}
 	if err := c.ExecutionRPCClient.Validate(); err != nil {
 		return fmt.Errorf("error validating Client config: %w", err)
+	}
+	if c.ComparisonExecution.Enable {
+		if c.ExecutionRPCClient.URL == "" || c.ExecutionRPCClient.URL == "self" || c.ExecutionRPCClient.URL == "self-auth" {
+			return errors.New("comparison execution mode requires --node.execution-rpc-client.url to be set to an external URL")
+		}
 	}
 	// Check that sync-interval is not more than msg-lag / 2
 	if c.ConsensusExecutionSyncer.SyncInterval > c.SyncMonitor.MsgLag/2 {
@@ -194,6 +201,7 @@ func ConfigAddOptions(prefix string, f *pflag.FlagSet, feedInputEnable bool, fee
 	ConsensusExecutionSyncerConfigAddOptions(prefix+".consensus-execution-syncer", f)
 	rpcserver.ConfigAddOptions(prefix+".rpc-server", "consensus", f)
 	rpcclient.RPCClientAddOptions(prefix+".execution-rpc-client", f, &ConfigDefault.ExecutionRPCClient)
+	comparison.ComparisonExecutionConfigAddOptions(prefix+".comparison-execution", f)
 	nitroversionalerter.ServerConfigAddOptions(prefix+".version-alerter-server", f)
 }
 
@@ -219,6 +227,7 @@ var ConfigDefault = Config{
 	BlockMetadataFetcher:     DefaultBlockMetadataFetcherConfig,
 	Maintenance:              DefaultMaintenanceConfig,
 	ConsensusExecutionSyncer: DefaultConsensusExecutionSyncerConfig,
+	ComparisonExecution:      comparison.DefaultComparisonExecutionConfig,
 	VersionAlerterServer:     nitroversionalerter.DefaultServerConfig,
 	RPCServer:                rpcserver.DefaultConfig,
 	ExecutionRPCClient: rpcclient.ClientConfig{
@@ -1535,7 +1544,14 @@ func CreateConsensusNode(
 	var executionRecorder execution.ExecutionRecorder
 	var executionSequencer execution.ExecutionSequencer
 	var arbOSVersionGetter execution.ArbOSVersionGetter
-	if configFetcher.Get().ExecutionRPCClient.URL != "" {
+	if configFetcher.Get().ComparisonExecution.Enable {
+		// In comparison mode, fullExecutionClient is a ComparisonClient
+		// wrapping both internal geth and external RPC
+		executionClient = fullExecutionClient
+		executionRecorder = fullExecutionClient
+		executionSequencer = fullExecutionClient
+		arbOSVersionGetter = fullExecutionClient
+	} else if configFetcher.Get().ExecutionRPCClient.URL != "" {
 		execConfigFetcher := func() *rpcclient.ClientConfig { return &configFetcher.Get().ExecutionRPCClient }
 		rpcClient := executionrpcclient.NewClient(execConfigFetcher, stack)
 		executionClient = rpcClient
@@ -1558,7 +1574,11 @@ func CreateConsensusNode(
 
 func (n *Node) Start(ctx context.Context) error {
 	var err error
-	if execRPCClient, ok := n.ExecutionClient.(*executionrpcclient.Client); ok {
+	if compClient, ok := n.ExecutionClient.(*comparison.ComparisonClient); ok {
+		if err = compClient.StartExternal(ctx); err != nil {
+			return fmt.Errorf("error starting comparison external execution client: %w", err)
+		}
+	} else if execRPCClient, ok := n.ExecutionClient.(*executionrpcclient.Client); ok {
 		if err = execRPCClient.Start(ctx); err != nil {
 			return fmt.Errorf("error starting exec rpc client: %w", err)
 		}
@@ -1705,6 +1725,9 @@ func (n *Node) Start(ctx context.Context) error {
 }
 
 func (n *Node) StopAndWait() {
+	if compClient, ok := n.ExecutionClient.(*comparison.ComparisonClient); ok {
+		compClient.StopExternal()
+	}
 	if n.ConsensusExecutionSyncer != nil {
 		n.ConsensusExecutionSyncer.StopAndWait()
 	}
