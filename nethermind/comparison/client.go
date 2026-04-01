@@ -7,7 +7,6 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
-	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/node"
 
 	"github.com/offchainlabs/nitro/arbos/arbostypes"
@@ -45,14 +44,12 @@ func NewComparisonClient(
 // --- Compared methods (call both, compare, return internal result) ---
 
 func (c *ComparisonClient) DigestMessage(msgIdx arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata, msgForPrefetch *arbostypes.MessageWithMetadata) containers.PromiseInterface[*execution.MessageResult] {
-	log.Info("ComparisonClient: DigestMessage", "msgIdx", msgIdx)
 	internal := c.internal.DigestMessage(msgIdx, msg, msgForPrefetch)
 	external := c.external.DigestMessage(msgIdx, msg, msgForPrefetch)
 	return comparePromises(c.fatalErrChan, "DigestMessage", internal, external)
 }
 
 func (c *ComparisonClient) Reorg(msgIdxOfFirstMsgToAdd arbutil.MessageIndex, newMessages []arbostypes.MessageWithMetadataAndBlockInfo, oldMessages []*arbostypes.MessageWithMetadata) containers.PromiseInterface[[]*execution.MessageResult] {
-	log.Info("ComparisonClient: Reorg", "count", msgIdxOfFirstMsgToAdd, "newMessages", len(newMessages), "oldMessages", len(oldMessages))
 	internal := c.internal.Reorg(msgIdxOfFirstMsgToAdd, newMessages, oldMessages)
 	external := c.external.Reorg(msgIdxOfFirstMsgToAdd, newMessages, oldMessages)
 	return comparePromises(c.fatalErrChan, "Reorg", internal, external)
