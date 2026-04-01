@@ -29,6 +29,7 @@ import (
 	"github.com/offchainlabs/nitro/cmd/util/confighelpers"
 	"github.com/offchainlabs/nitro/daprovider/anytrust"
 	"github.com/offchainlabs/nitro/execution/gethexec"
+	"github.com/offchainlabs/nitro/nethermind/promgateway"
 	"github.com/offchainlabs/nitro/util/colors"
 	"github.com/offchainlabs/nitro/validator/valnode"
 )
@@ -53,6 +54,7 @@ type NodeConfig struct {
 	MetricsServer          genericconf.MetricsServerConfig  `koanf:"metrics-server"`
 	PProf                  bool                             `koanf:"pprof"`
 	PprofCfg               genericconf.PProf                `koanf:"pprof-cfg"`
+	PrometheusPushgateway  promgateway.Config               `koanf:"prometheus-pushgateway"`
 	Init                   conf.InitConfig                  `koanf:"init"`
 	Rpc                    genericconf.RpcConfig            `koanf:"rpc"`
 	BlocksReExecutor       blocksreexecutor.Config          `koanf:"blocks-reexecutor"`
@@ -82,6 +84,7 @@ var NodeConfigDefault = NodeConfig{
 	Rpc:                    genericconf.DefaultRpcConfig,
 	PProf:                  false,
 	PprofCfg:               genericconf.PProfDefault,
+	PrometheusPushgateway:  promgateway.DefaultConfig,
 	BlocksReExecutor:       blocksreexecutor.DefaultConfig,
 	EnsureRollupDeployment: true,
 	VersionAlerter:         nitroversionalerter.DefaultClientConfig,
@@ -211,6 +214,7 @@ func NodeConfigAddOptions(f *pflag.FlagSet) {
 	genericconf.MetricsServerAddOptions("metrics-server", f)
 	f.Bool("pprof", NodeConfigDefault.PProf, "enable pprof")
 	genericconf.PProfAddOptions("pprof-cfg", f)
+	promgateway.ConfigAddOptions("prometheus-pushgateway", f)
 
 	conf.InitConfigAddOptions("init", f)
 	genericconf.RpcConfigAddOptions("rpc", f)

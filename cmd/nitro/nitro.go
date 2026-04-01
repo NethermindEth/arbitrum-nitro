@@ -36,6 +36,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/graphql"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/node"
 
 	"github.com/offchainlabs/nitro/arbnode"
@@ -51,9 +52,12 @@ import (
 	"github.com/offchainlabs/nitro/cmd/util"
 	"github.com/offchainlabs/nitro/cmd/util/confighelpers"
 	"github.com/offchainlabs/nitro/daprovider"
+	"github.com/offchainlabs/nitro/execution"
 	"github.com/offchainlabs/nitro/execution/gethexec"
 	_ "github.com/offchainlabs/nitro/execution/nodeinterface"
 	"github.com/offchainlabs/nitro/execution_consensus"
+	"github.com/offchainlabs/nitro/nethermind/comparison"
+	"github.com/offchainlabs/nitro/nethermind/promgateway"
 	"github.com/offchainlabs/nitro/solgen/go/bridgegen"
 	"github.com/offchainlabs/nitro/solgen/go/precompilesgen"
 	"github.com/offchainlabs/nitro/solgen/go/rollupgen"
@@ -413,6 +417,21 @@ func mainImpl() int {
 		}
 	}()
 
+	if nodeConfig.PrometheusPushgateway.Enabled {
+		stopPusher := promgateway.StartPusher(
+			ctx,
+			&nodeConfig.PrometheusPushgateway,
+			metrics.DefaultRegistry,
+		)
+		deferFuncs = append(deferFuncs, stopPusher)
+		log.Info("Started Prometheus Pushgateway pusher",
+			"url", nodeConfig.PrometheusPushgateway.URL,
+			"job", nodeConfig.PrometheusPushgateway.JobName,
+			"prefix", nodeConfig.PrometheusPushgateway.Prefix,
+			"instance", nodeConfig.PrometheusPushgateway.Instance,
+			"interval", nodeConfig.PrometheusPushgateway.UpdateInterval)
+	}
+
 	// Check that node is compatible with on-chain WASM module root on startup and before any ArbOS upgrades take effect to prevent divergences
 	if nodeConfig.Node.ParentChainReader.Enable && nodeConfig.Validation.Wasm.EnableWasmrootsCheck {
 		err := checkWasmModuleRootCompatibility(ctx, nodeConfig.Validation.Wasm, l1Client, rollupAddrs)
@@ -541,7 +560,11 @@ func mainImpl() int {
 
 	var execNode *gethexec.ExecutionNode
 	var consensusNode *arbnode.Node
-	if nodeConfig.Node.ExecutionRPCClient.URL == "" || nodeConfig.Node.ExecutionRPCClient.URL == "self" || nodeConfig.Node.ExecutionRPCClient.URL == "self-auth" {
+	needsInternalExecution := nodeConfig.Node.ExecutionRPCClient.URL == "" ||
+		nodeConfig.Node.ExecutionRPCClient.URL == "self" ||
+		nodeConfig.Node.ExecutionRPCClient.URL == "self-auth" ||
+		nodeConfig.Node.ComparisonExecution.Enable
+	if needsInternalExecution {
 		execNode, err = gethexec.CreateExecutionNode(
 			ctx,
 			stack,
@@ -557,10 +580,18 @@ func mainImpl() int {
 			return 1
 		}
 	}
+	var fullExecClient execution.FullExecutionClient
+	if nodeConfig.Node.ComparisonExecution.Enable && execNode != nil {
+		execConfigFetcher := func() *rpcclient.ClientConfig { return &liveNodeConfig.Get().Node.ExecutionRPCClient }
+		fullExecClient = comparison.NewComparisonClient(execNode, execConfigFetcher, stack, fatalErrChan)
+		log.Info("Comparison execution mode enabled", "externalURL", nodeConfig.Node.ExecutionRPCClient.URL)
+	} else {
+		fullExecClient = execNode
+	}
 	consensusNode, err = arbnode.CreateConsensusNode(
 		ctx,
 		stack,
-		execNode,
+		fullExecClient,
 		consensusDB,
 		&config.ConsensusNodeConfigFetcher{LiveConfig: liveNodeConfig},
 		l2BlockChain.Config(),
