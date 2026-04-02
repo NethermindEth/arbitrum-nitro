@@ -58,7 +58,9 @@ func (c *ComparisonClient) Reorg(msgIdxOfFirstMsgToAdd arbutil.MessageIndex, new
 func (c *ComparisonClient) HeadMessageIndex() containers.PromiseInterface[arbutil.MessageIndex] {
 	internal := c.internal.HeadMessageIndex()
 	external := c.external.HeadMessageIndex()
-	return comparePromises(nil, "HeadMessageIndex", internal, external)
+	return comparePromises(nil, "HeadMessageIndex", internal, external,
+		func(a, b arbutil.MessageIndex) arbutil.MessageIndex { return min(a, b) },
+	)
 }
 
 func (c *ComparisonClient) ResultAtMessageIndex(msgIdx arbutil.MessageIndex) containers.PromiseInterface[*execution.MessageResult] {

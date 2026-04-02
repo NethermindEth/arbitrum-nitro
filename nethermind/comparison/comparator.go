@@ -32,9 +32,17 @@ var cmpOpts = cmp.Options{
 	cmpopts.EquateEmpty(),
 }
 
+func pickResult[T any](intRes, extRes T, selectResult []func(T, T) T) T {
+	if len(selectResult) > 0 && selectResult[0] != nil {
+		return selectResult[0](intRes, extRes)
+	}
+	return intRes
+}
+
 func comparePromises[T any](fatalErrChan chan error, op string,
 	internal containers.PromiseInterface[T],
 	external containers.PromiseInterface[T],
+	selectResult ...func(intRes, extRes T) T,
 ) containers.PromiseInterface[T] {
 	promise := containers.NewPromise[T](nil)
 	go func() {
@@ -80,10 +88,10 @@ func comparePromises[T any](fatalErrChan chan error, op string,
 				promise.ProduceError(err)
 			default:
 				log.Error("Non-fatal comparison error", "operation", op, "err", err)
-				promise.Produce(intRes)
+				promise.Produce(pickResult(intRes, extRes, selectResult))
 			}
 		} else {
-			promise.Produce(intRes)
+			promise.Produce(pickResult(intRes, extRes, selectResult))
 		}
 	}()
 	return &promise
