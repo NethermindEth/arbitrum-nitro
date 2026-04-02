@@ -44,9 +44,14 @@ func NewComparisonClient(
 // --- Compared methods (call both, compare, return internal result) ---
 
 func (c *ComparisonClient) DigestMessage(msgIdx arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata, msgForPrefetch *arbostypes.MessageWithMetadata) containers.PromiseInterface[*execution.MessageResult] {
-	internal := digestOrResult(c.internal, msgIdx, msg, msgForPrefetch)
-	external := digestOrResult(c.external, msgIdx, msg, msgForPrefetch)
-	return comparePromises(c.fatalErrChan, "DigestMessage", internal, external)
+	return compareOps(c.fatalErrChan, "DigestMessage",
+		func() containers.PromiseInterface[*execution.MessageResult] {
+			return digestOrResult(c.internal, msgIdx, msg, msgForPrefetch)
+		},
+		func() containers.PromiseInterface[*execution.MessageResult] {
+			return digestOrResult(c.external, msgIdx, msg, msgForPrefetch)
+		},
+	)
 }
 
 // digestOrResult calls DigestMessage if the engine needs this block, or
@@ -61,53 +66,76 @@ func digestOrResult(engine execution.ExecutionClient, msgIdx arbutil.MessageInde
 }
 
 func (c *ComparisonClient) Reorg(msgIdxOfFirstMsgToAdd arbutil.MessageIndex, newMessages []arbostypes.MessageWithMetadataAndBlockInfo, oldMessages []*arbostypes.MessageWithMetadata) containers.PromiseInterface[[]*execution.MessageResult] {
-	internal := c.internal.Reorg(msgIdxOfFirstMsgToAdd, newMessages, oldMessages)
-	external := c.external.Reorg(msgIdxOfFirstMsgToAdd, newMessages, oldMessages)
-	return comparePromises(c.fatalErrChan, "Reorg", internal, external)
+	return compareOps(c.fatalErrChan, "Reorg",
+		func() containers.PromiseInterface[[]*execution.MessageResult] {
+			return c.internal.Reorg(msgIdxOfFirstMsgToAdd, newMessages, oldMessages)
+		},
+		func() containers.PromiseInterface[[]*execution.MessageResult] {
+			return c.external.Reorg(msgIdxOfFirstMsgToAdd, newMessages, oldMessages)
+		},
+	)
 }
 
 func (c *ComparisonClient) HeadMessageIndex() containers.PromiseInterface[arbutil.MessageIndex] {
-	internal := c.internal.HeadMessageIndex()
-	external := c.external.HeadMessageIndex()
-	return comparePromises(nil, "HeadMessageIndex", internal, external,
+	return compareOps(nil, "HeadMessageIndex",
+		func() containers.PromiseInterface[arbutil.MessageIndex] { return c.internal.HeadMessageIndex() },
+		func() containers.PromiseInterface[arbutil.MessageIndex] { return c.external.HeadMessageIndex() },
 		func(a, b arbutil.MessageIndex) arbutil.MessageIndex { return min(a, b) },
 	)
 }
 
 func (c *ComparisonClient) ResultAtMessageIndex(msgIdx arbutil.MessageIndex) containers.PromiseInterface[*execution.MessageResult] {
-	internal := c.internal.ResultAtMessageIndex(msgIdx)
-	external := c.external.ResultAtMessageIndex(msgIdx)
-	return comparePromises(nil, "ResultAtMessageIndex", internal, external)
+	return compareOps(nil, "ResultAtMessageIndex",
+		func() containers.PromiseInterface[*execution.MessageResult] {
+			return c.internal.ResultAtMessageIndex(msgIdx)
+		},
+		func() containers.PromiseInterface[*execution.MessageResult] {
+			return c.external.ResultAtMessageIndex(msgIdx)
+		},
+	)
 }
 
 func (c *ComparisonClient) SetFinalityData(safeFinalityData *arbutil.FinalityData, finalizedFinalityData *arbutil.FinalityData, validatedFinalityData *arbutil.FinalityData) containers.PromiseInterface[struct{}] {
-	internal := c.internal.SetFinalityData(safeFinalityData, finalizedFinalityData, validatedFinalityData)
-	external := c.external.SetFinalityData(safeFinalityData, finalizedFinalityData, validatedFinalityData)
-	return comparePromises(c.fatalErrChan, "SetFinalityData", internal, external)
+	return compareOps(c.fatalErrChan, "SetFinalityData",
+		func() containers.PromiseInterface[struct{}] {
+			return c.internal.SetFinalityData(safeFinalityData, finalizedFinalityData, validatedFinalityData)
+		},
+		func() containers.PromiseInterface[struct{}] {
+			return c.external.SetFinalityData(safeFinalityData, finalizedFinalityData, validatedFinalityData)
+		},
+	)
 }
 
 func (c *ComparisonClient) MarkFeedStart(to arbutil.MessageIndex) containers.PromiseInterface[struct{}] {
-	internal := c.internal.MarkFeedStart(to)
-	external := c.external.MarkFeedStart(to)
-	return comparePromises(c.fatalErrChan, "MarkFeedStart", internal, external)
+	return compareOps(c.fatalErrChan, "MarkFeedStart",
+		func() containers.PromiseInterface[struct{}] { return c.internal.MarkFeedStart(to) },
+		func() containers.PromiseInterface[struct{}] { return c.external.MarkFeedStart(to) },
+	)
 }
 
 func (c *ComparisonClient) ShouldTriggerMaintenance() containers.PromiseInterface[bool] {
-	internal := c.internal.ShouldTriggerMaintenance()
-	external := c.external.ShouldTriggerMaintenance()
-	return comparePromises(c.fatalErrChan, "ShouldTriggerMaintenance", internal, external)
+	return compareOps(c.fatalErrChan, "ShouldTriggerMaintenance",
+		func() containers.PromiseInterface[bool] { return c.internal.ShouldTriggerMaintenance() },
+		func() containers.PromiseInterface[bool] { return c.external.ShouldTriggerMaintenance() },
+	)
 }
 
 func (c *ComparisonClient) MaintenanceStatus() containers.PromiseInterface[*execution.MaintenanceStatus] {
-	internal := c.internal.MaintenanceStatus()
-	external := c.external.MaintenanceStatus()
-	return comparePromises(c.fatalErrChan, "MaintenanceStatus", internal, external)
+	return compareOps(c.fatalErrChan, "MaintenanceStatus",
+		func() containers.PromiseInterface[*execution.MaintenanceStatus] {
+			return c.internal.MaintenanceStatus()
+		},
+		func() containers.PromiseInterface[*execution.MaintenanceStatus] {
+			return c.external.MaintenanceStatus()
+		},
+	)
 }
 
 func (c *ComparisonClient) ArbOSVersionForMessageIndex(msgIdx arbutil.MessageIndex) containers.PromiseInterface[uint64] {
-	internal := c.internal.ArbOSVersionForMessageIndex(msgIdx)
-	external := c.external.ArbOSVersionForMessageIndex(msgIdx)
-	return comparePromises(c.fatalErrChan, "ArbOSVersionForMessageIndex", internal, external)
+	return compareOps(c.fatalErrChan, "ArbOSVersionForMessageIndex",
+		func() containers.PromiseInterface[uint64] { return c.internal.ArbOSVersionForMessageIndex(msgIdx) },
+		func() containers.PromiseInterface[uint64] { return c.external.ArbOSVersionForMessageIndex(msgIdx) },
+	)
 }
 
 // --- Internal-only methods (delegate to geth only) ---

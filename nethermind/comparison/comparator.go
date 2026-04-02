@@ -39,7 +39,19 @@ func pickResult[T any](intRes, extRes T, selectResult []func(T, T) T) T {
 	return intRes
 }
 
+func compareOps[T any](fatalErrChan chan error, op string,
+	internalOp, externalOp func() containers.PromiseInterface[T],
+	selectResult ...func(intRes, extRes T) T,
+) containers.PromiseInterface[T] {
+	internalStart := time.Now()
+	internal := internalOp()
+	externalStart := time.Now()
+	external := externalOp()
+	return comparePromises(fatalErrChan, op, internalStart, externalStart, internal, external, selectResult...)
+}
+
 func comparePromises[T any](fatalErrChan chan error, op string,
+	internalStart, externalStart time.Time,
 	internal containers.PromiseInterface[T],
 	external containers.PromiseInterface[T],
 	selectResult ...func(intRes, extRes T) T,
@@ -52,9 +64,6 @@ func comparePromises[T any](fatalErrChan chan error, op string,
 		var intRes, extRes T
 		var intErr, extErr error
 		var internalDuration, externalDuration time.Duration
-
-		internalStart := time.Now()
-		externalStart := time.Now()
 
 		internalDone := false
 		externalDone := false
