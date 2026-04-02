@@ -90,6 +90,10 @@ func comparePromises[T any](fatalErrChan chan error, op string,
 				log.Error("Non-fatal comparison error", "operation", op, "err", err)
 				promise.Produce(pickResult(intRes, extRes, selectResult))
 			}
+		} else if intErr != nil {
+			// Both failed with the same error — propagate it rather than
+			// producing a zero-value result that would cause nil dereferences.
+			promise.ProduceError(intErr)
 		} else {
 			promise.Produce(pickResult(intRes, extRes, selectResult))
 		}
