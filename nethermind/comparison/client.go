@@ -44,9 +44,20 @@ func NewComparisonClient(
 // --- Compared methods (call both, compare, return internal result) ---
 
 func (c *ComparisonClient) DigestMessage(msgIdx arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata, msgForPrefetch *arbostypes.MessageWithMetadata) containers.PromiseInterface[*execution.MessageResult] {
-	internal := c.internal.DigestMessage(msgIdx, msg, msgForPrefetch)
-	external := c.external.DigestMessage(msgIdx, msg, msgForPrefetch)
+	internal := digestOrResult(c.internal, msgIdx, msg, msgForPrefetch)
+	external := digestOrResult(c.external, msgIdx, msg, msgForPrefetch)
 	return comparePromises(c.fatalErrChan, "DigestMessage", internal, external)
+}
+
+// digestOrResult calls DigestMessage if the engine needs this block, or
+// ResultAtMessageIndex if the engine already has it (head >= msgIdx).
+// This handles engines being at different positions after a crash/restart.
+func digestOrResult(engine execution.ExecutionClient, msgIdx arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata, msgForPrefetch *arbostypes.MessageWithMetadata) containers.PromiseInterface[*execution.MessageResult] {
+	head, err := engine.HeadMessageIndex().Current()
+	if err == nil && head >= msgIdx {
+		return engine.ResultAtMessageIndex(msgIdx)
+	}
+	return engine.DigestMessage(msgIdx, msg, msgForPrefetch)
 }
 
 func (c *ComparisonClient) Reorg(msgIdxOfFirstMsgToAdd arbutil.MessageIndex, newMessages []arbostypes.MessageWithMetadataAndBlockInfo, oldMessages []*arbostypes.MessageWithMetadata) containers.PromiseInterface[[]*execution.MessageResult] {
