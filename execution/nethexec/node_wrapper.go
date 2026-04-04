@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/log"
 
 	"github.com/offchainlabs/nitro/arbos/arbostypes"
@@ -19,12 +19,6 @@ import (
 )
 
 var digestedMsgCounter uint64
-
-type FullExecutionClient interface {
-	execution.ExecutionSequencer // includes ExecutionClient
-	execution.ExecutionRecorder
-	execution.ExecutionBatchPoster
-}
 
 func IsExternalExecutionEnabled() bool {
 	useExternalExecution, err := strconv.ParseBool(os.Getenv("PR_USE_EXTERNAL_EXECUTION"))
@@ -90,10 +84,7 @@ func (w *NodeWrapper) Reorg(count arbutil.MessageIndex, newMessages []arbostypes
 }
 
 func (w *NodeWrapper) HeadMessageIndex() containers.PromiseInterface[arbutil.MessageIndex] {
-	//start := time.Now()
-	//log.Info("NodeWrapper: HeadMessageIndex")
 	result := w.ExecutionNode.HeadMessageIndex()
-	//log.Info("NodeWrapper: HeadMessageIndex completed", "elapsed", time.Since(start))
 	return result
 }
 
@@ -121,7 +112,7 @@ func (w *NodeWrapper) BlockNumberToMessageIndex(blockNum uint64) containers.Prom
 	return result
 }
 
-func (w *NodeWrapper) SetFinalityData(ctx context.Context, finalityData *arbutil.FinalityData, finalizedFinalityData *arbutil.FinalityData, validatedFinalityData *arbutil.FinalityData) containers.PromiseInterface[struct{}] {
+func (w *NodeWrapper) SetFinalityData(finalityData *arbutil.FinalityData, finalizedFinalityData *arbutil.FinalityData, validatedFinalityData *arbutil.FinalityData) containers.PromiseInterface[struct{}] {
 	start := time.Now()
 	log.Info("NodeWrapper: SetFinalityData",
 		"safeFinalityData", finalityData,
@@ -129,7 +120,7 @@ func (w *NodeWrapper) SetFinalityData(ctx context.Context, finalityData *arbutil
 		"validatedFinalityData", validatedFinalityData)
 
 	go func() {
-		err := w.rpcClient.SetFinalityData(ctx, finalityData, finalizedFinalityData, validatedFinalityData)
+		err := w.rpcClient.SetFinalityData(context.Background(), finalityData, finalizedFinalityData, validatedFinalityData)
 		if err != nil {
 			log.Error("NodeWrapper: SetFinalityData via JSON-RPC failed", "error", err, "elapsed", time.Since(start))
 		} else {
@@ -138,7 +129,7 @@ func (w *NodeWrapper) SetFinalityData(ctx context.Context, finalityData *arbutil
 	}()
 
 	// Also call the original ExecutionNode method
-	result := w.ExecutionNode.SetFinalityData(ctx, finalityData, finalizedFinalityData, validatedFinalityData)
+	result := w.ExecutionNode.SetFinalityData(finalityData, finalizedFinalityData, validatedFinalityData)
 	log.Info("NodeWrapper: SetFinalityData via direct call completed", "elapsed", time.Since(start))
 
 	return result
@@ -152,12 +143,20 @@ func (w *NodeWrapper) MarkFeedStart(to arbutil.MessageIndex) containers.PromiseI
 	return result
 }
 
-func (w *NodeWrapper) Maintenance() containers.PromiseInterface[struct{}] {
+func (w *NodeWrapper) TriggerMaintenance() containers.PromiseInterface[struct{}] {
 	start := time.Now()
-	log.Info("NodeWrapper: Maintenance")
-	result := w.ExecutionNode.Maintenance()
-	log.Info("NodeWrapper: Maintenance completed", "elapsed", time.Since(start))
+	log.Info("NodeWrapper: TriggerMaintenance")
+	result := w.ExecutionNode.TriggerMaintenance()
+	log.Info("NodeWrapper: TriggerMaintenance completed", "elapsed", time.Since(start))
 	return result
+}
+
+func (w *NodeWrapper) ShouldTriggerMaintenance() containers.PromiseInterface[bool] {
+	return w.ExecutionNode.ShouldTriggerMaintenance()
+}
+
+func (w *NodeWrapper) MaintenanceStatus() containers.PromiseInterface[*execution.MaintenanceStatus] {
+	return w.ExecutionNode.MaintenanceStatus()
 }
 
 func (w *NodeWrapper) Start(ctx context.Context) error {
@@ -208,10 +207,7 @@ func (w *NodeWrapper) SequenceDelayedMessage(message *arbostypes.L1IncomingMessa
 }
 
 func (w *NodeWrapper) NextDelayedMessageNumber() (uint64, error) {
-	//start := time.Now()
-	//log.Info("NodeWrapper: NextDelayedMessageNumber")
 	result, err := w.ExecutionNode.NextDelayedMessageNumber()
-	//log.Info("NodeWrapper: NextDelayedMessageNumber completed", "result", result, "err", err, "elapsed", time.Since(start))
 	return result, err
 }
 
@@ -233,35 +229,28 @@ func (w *NodeWrapper) FullSyncProgressMap(ctx context.Context) map[string]interf
 
 // ---- execution.ExecutionRecorder interface methods ----
 
-func (w *NodeWrapper) RecordBlockCreation(ctx context.Context, pos arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata) (*execution.RecordResult, error) {
+func (w *NodeWrapper) RecordBlockCreation(pos arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata, wasmTargets []rawdb.WasmTarget) containers.PromiseInterface[*execution.RecordResult] {
 	start := time.Now()
 	log.Info("NodeWrapper: RecordBlockCreation", "pos", pos)
-	result, err := w.ExecutionNode.RecordBlockCreation(ctx, pos, msg)
-	log.Info("NodeWrapper: RecordBlockCreation completed", "pos", pos, "err", err, "elapsed", time.Since(start))
-	return result, err
+	result := w.ExecutionNode.RecordBlockCreation(pos, msg, wasmTargets)
+	log.Info("NodeWrapper: RecordBlockCreation completed", "pos", pos, "elapsed", time.Since(start))
+	return result
 }
 
-func (w *NodeWrapper) MarkValid(pos arbutil.MessageIndex, resultHash common.Hash) {
-	start := time.Now()
-	log.Info("NodeWrapper: MarkValid", "pos", pos, "resultHash", resultHash)
-	w.ExecutionNode.MarkValid(pos, resultHash)
-	log.Info("NodeWrapper: MarkValid completed", "pos", pos, "elapsed", time.Since(start))
-}
-
-func (w *NodeWrapper) PrepareForRecord(ctx context.Context, start, end arbutil.MessageIndex) error {
+func (w *NodeWrapper) PrepareForRecord(start, end arbutil.MessageIndex) containers.PromiseInterface[struct{}] {
 	startTime := time.Now()
 	log.Info("NodeWrapper: PrepareForRecord", "start", start, "end", end)
-	err := w.ExecutionNode.PrepareForRecord(ctx, start, end)
-	log.Info("NodeWrapper: PrepareForRecord completed", "start", start, "end", end, "err", err, "elapsed", time.Since(startTime))
-	return err
+	result := w.ExecutionNode.PrepareForRecord(start, end)
+	log.Info("NodeWrapper: PrepareForRecord completed", "start", start, "end", end, "elapsed", time.Since(startTime))
+	return result
 }
 
-// ---- execution.ExecutionBatchPoster interface methods ----
+// ---- execution.ArbOSVersionGetter interface methods ----
 
-func (w *NodeWrapper) ArbOSVersionForMessageIndex(msgIdx arbutil.MessageIndex) (uint64, error) {
+func (w *NodeWrapper) ArbOSVersionForMessageIndex(msgIdx arbutil.MessageIndex) containers.PromiseInterface[uint64] {
 	start := time.Now()
 	log.Info("NodeWrapper: ArbOSVersionForMessageIndex", "msgIdx", msgIdx)
-	result, err := w.ExecutionNode.ArbOSVersionForMessageIndex(msgIdx)
-	log.Info("NodeWrapper: ArbOSVersionForMessageIndex completed", "msgIdx", msgIdx, "result", result, "err", err, "elapsed", time.Since(start))
-	return result, err
+	result := w.ExecutionNode.ArbOSVersionForMessageIndex(msgIdx)
+	log.Info("NodeWrapper: ArbOSVersionForMessageIndex completed", "msgIdx", msgIdx, "elapsed", time.Since(start))
+	return result
 }

@@ -210,7 +210,7 @@ func WriteOrTestGenblock(executionDB ethdb.Database, cacheConfig *core.BlockChai
 
 	triedbConfig := cacheConfig.TriedbConfig()
 	triedbConfig.Preimages = false
-	stateDatabase := state.NewDatabase(triedb.NewDatabase(chainDb, triedbConfig), nil)
+	stateDatabase := state.NewDatabase(triedb.NewDatabase(executionDB, triedbConfig), nil)
 
 	statedb, _ := state.New(stateRoot, stateDatabase)
 	arbosAccountStorageRoot := statedb.GetStorageRoot(arbosAccountAddress)
