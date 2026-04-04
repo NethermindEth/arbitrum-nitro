@@ -1,7 +1,7 @@
 package nethexec
 
 import (
-	"github.com/offchainlabs/nitro/execution/gethexec"
+	"os"
 )
 
 // ExecutionMode controls how the wrapper uses internal vs external EL
@@ -13,9 +13,9 @@ const (
 	ModeExternalOnly                      // return external only
 )
 
-// GetExecutionMode reads from config
-func GetExecutionMode(config *gethexec.Config) ExecutionMode {
-	switch config.ExecutionMode {
+// GetExecutionMode reads from the environment variable PR_EXECUTION_MODE
+func GetExecutionMode() ExecutionMode {
+	switch os.Getenv("PR_EXECUTION_MODE") {
 	case "internal", "":
 		return ModeInternalOnly
 	case "compare", "dual", "both":

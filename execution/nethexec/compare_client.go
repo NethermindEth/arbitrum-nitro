@@ -12,9 +12,9 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
 
-	"github.com/offchainlabs/nitro/arbnode"
 	"github.com/offchainlabs/nitro/arbos/arbostypes"
 	"github.com/offchainlabs/nitro/arbutil"
+	"github.com/offchainlabs/nitro/consensus"
 	"github.com/offchainlabs/nitro/execution"
 	"github.com/offchainlabs/nitro/execution/gethexec"
 	"github.com/offchainlabs/nitro/util/containers"
@@ -26,10 +26,7 @@ type FullExecutionClient interface {
 	execution.ArbOSVersionGetter
 }
 
-var (
-	_ FullExecutionClient         = (*compareExecutionClient)(nil)
-	_ arbnode.ExecutionNodeBridge = (*compareExecutionClient)(nil)
-)
+var _ FullExecutionClient = (*compareExecutionClient)(nil)
 
 type compareExecutionClient struct {
 	gethExecutionClient       *gethexec.ExecutionNode
@@ -356,27 +353,24 @@ func (w *compareExecutionClient) FullSyncProgressMap(ctx context.Context) map[st
 
 // ---- execution.ExecutionRecorder interface methods ----
 
-func (w *compareExecutionClient) RecordBlockCreation(ctx context.Context, index arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata, wasmTargets []rawdb.WasmTarget) (*execution.RecordResult, error) {
+func (w *compareExecutionClient) RecordBlockCreation(index arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata, wasmTargets []rawdb.WasmTarget) containers.PromiseInterface[*execution.RecordResult] {
 	start := time.Now()
 	log.Debug("CompareExecutionClient: RecordBlockCreation", "index", index)
-	result, err := w.gethExecutionClient.RecordBlockCreation(ctx, index, msg, wasmTargets)
-	log.Debug("CompareExecutionClient: RecordBlockCreation completed", "index", index, "err", err, "elapsed", time.Since(start))
-	return result, err
+	result := w.gethExecutionClient.RecordBlockCreation(index, msg, wasmTargets)
+	log.Debug("CompareExecutionClient: RecordBlockCreation completed", "index", index, "elapsed", time.Since(start))
+	return result
 }
 
-func (w *compareExecutionClient) MarkValid(index arbutil.MessageIndex, resultHash common.Hash) {
-	start := time.Now()
-	log.Debug("CompareExecutionClient: MarkValid", "index", index, "resultHash", resultHash)
-	w.gethExecutionClient.MarkValid(index, resultHash)
-	log.Debug("CompareExecutionClient: MarkValid completed", "index", index, "elapsed", time.Since(start))
-}
-
-func (w *compareExecutionClient) PrepareForRecord(ctx context.Context, start, end arbutil.MessageIndex) error {
+func (w *compareExecutionClient) PrepareForRecord(start, end arbutil.MessageIndex) containers.PromiseInterface[struct{}] {
 	startTime := time.Now()
 	log.Debug("CompareExecutionClient: PrepareForRecord", "start", start, "end", end)
-	err := w.gethExecutionClient.PrepareForRecord(ctx, start, end)
-	log.Debug("CompareExecutionClient: PrepareForRecord completed", "start", start, "end", end, "err", err, "elapsed", time.Since(startTime))
-	return err
+	result := w.gethExecutionClient.PrepareForRecord(start, end)
+	log.Debug("CompareExecutionClient: PrepareForRecord completed", "start", start, "end", end, "elapsed", time.Since(startTime))
+	return result
+}
+
+func (w *compareExecutionClient) IsTxHashInOnchainFilter(txHash common.Hash) (bool, error) {
+	return w.gethExecutionClient.IsTxHashInOnchainFilter(txHash)
 }
 
 // ---- execution.ExecutionBatchindexter interface methods ----
@@ -393,7 +387,7 @@ func (w *compareExecutionClient) ArbOSVersionForMessageIndex(msgIdx arbutil.Mess
 	return promise
 }
 
-func (w *compareExecutionClient) SetConsensusClient(consensus execution.FullConsensusClient) {
+func (w *compareExecutionClient) SetConsensusClient(consensus consensus.FullConsensusClient) {
 	w.gethExecutionClient.SetConsensusClient(consensus)
 }
 

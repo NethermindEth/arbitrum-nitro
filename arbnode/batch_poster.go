@@ -10,7 +10,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"github.com/offchainlabs/nitro/callstack"
 	"math"
 	"math/big"
 	"strings"

@@ -4,6 +4,8 @@
 package programs
 
 import (
+	"fmt"
+
 	"github.com/offchainlabs/nitro/callstack"
 	"strconv"
 

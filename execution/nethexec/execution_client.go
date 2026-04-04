@@ -12,17 +12,16 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rpc"
 
-	"github.com/offchainlabs/nitro/arbnode"
 	"github.com/offchainlabs/nitro/arbos/arbostypes"
 	"github.com/offchainlabs/nitro/arbutil"
+	"github.com/offchainlabs/nitro/consensus"
 	"github.com/offchainlabs/nitro/execution"
 	"github.com/offchainlabs/nitro/util/containers"
 )
 
 var (
-	_ FullExecutionClient         = (*nethermindExecutionClient)(nil)
-	_ arbnode.ExecutionNodeBridge = (*nethermindExecutionClient)(nil)
-	_ InitMessageDigester         = (*nethermindExecutionClient)(nil)
+	_ FullExecutionClient = (*nethermindExecutionClient)(nil)
+	_ InitMessageDigester = (*nethermindExecutionClient)(nil)
 )
 
 type nethermindExecutionClient struct {
@@ -237,16 +236,20 @@ func (p *nethermindExecutionClient) FullSyncProgressMap(ctx context.Context) map
 	return progressMap
 }
 
-func (p *nethermindExecutionClient) RecordBlockCreation(ctx context.Context, index arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata, wasmTargets []rawdb.WasmTarget) (*execution.RecordResult, error) {
-	return nil, fmt.Errorf("RecordBlockCreation not implemented")
+func (p *nethermindExecutionClient) RecordBlockCreation(index arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata, wasmTargets []rawdb.WasmTarget) containers.PromiseInterface[*execution.RecordResult] {
+	promise := containers.NewPromise[*execution.RecordResult](nil)
+	promise.ProduceError(fmt.Errorf("RecordBlockCreation not implemented"))
+	return &promise
 }
 
-func (p *nethermindExecutionClient) MarkValid(index arbutil.MessageIndex, resultHash common.Hash) {
-	// no-op until implemented
+func (p *nethermindExecutionClient) PrepareForRecord(start, end arbutil.MessageIndex) containers.PromiseInterface[struct{}] {
+	promise := containers.NewPromise[struct{}](nil)
+	promise.ProduceError(fmt.Errorf("PrepareForRecord not implemented"))
+	return &promise
 }
 
-func (p *nethermindExecutionClient) PrepareForRecord(ctx context.Context, start, end arbutil.MessageIndex) error {
-	return fmt.Errorf("PrepareForRecord not implemented")
+func (p *nethermindExecutionClient) IsTxHashInOnchainFilter(txHash common.Hash) (bool, error) {
+	return false, fmt.Errorf("IsTxHashInOnchainFilter not implemented")
 }
 
 func (p *nethermindExecutionClient) ArbOSVersionForMessageIndex(msgIdx arbutil.MessageIndex) containers.PromiseInterface[uint64] {
@@ -255,7 +258,7 @@ func (p *nethermindExecutionClient) ArbOSVersionForMessageIndex(msgIdx arbutil.M
 	return &promise
 }
 
-func (w *nethermindExecutionClient) SetConsensusClient(consensus execution.FullConsensusClient) {
+func (w *nethermindExecutionClient) SetConsensusClient(consensus consensus.FullConsensusClient) {
 	// no-op until consensus path is implemented
 }
 

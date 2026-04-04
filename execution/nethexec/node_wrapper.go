@@ -32,11 +32,11 @@ func IsExternalExecutionEnabled() bool {
 type NodeWrapper struct {
 	*gethexec.ExecutionNode
 
-	rpcClient       *NethRpcClient
+	rpcClient       *nethRpcClient
 	maxMsgsToDigest uint64
 }
 
-func NewNodeWrapper(node *gethexec.ExecutionNode, rpcClient *NethRpcClient) *NodeWrapper {
+func NewNodeWrapper(node *gethexec.ExecutionNode, rpcClient *nethRpcClient) *NodeWrapper {
 	maxMsgsToDigest, err := strconv.ParseUint(os.Getenv("PR_MAX_MESSAGES_TO_DIGEST"), 10, 64)
 	if err != nil {
 		log.Warn("Wasn't able to read PR_MAX_MESSAGES_TO_DIGEST, setting to max value", "error", err)

@@ -11,7 +11,6 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
-	"github.com/offchainlabs/nitro/callstack"
 	"math"
 	"math/big"
 	"net/http"

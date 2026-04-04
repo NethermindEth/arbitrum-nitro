@@ -8,7 +8,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/offchainlabs/nitro/callstack"
 	"math"
 	"math/big"
 	"runtime/debug"

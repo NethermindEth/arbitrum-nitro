@@ -5,7 +5,6 @@ package gethhook
 
 import (
 	"errors"
-	"github.com/offchainlabs/nitro/callstack"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/arbitrum/multigas"
