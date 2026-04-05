@@ -365,7 +365,18 @@ func ProduceBlockAdvanced(
 		activeGroupCP:        nil,
 	}
 
+	types.SetCurrentBlockNumber(lastBlockHeader.Number.Int64() + 1)
+	var txIndex int64
+	txIndex = -1
+
 	for {
+		txIndex++
+		types.SetTransactionIndex(txIndex)
+
+		if types.IsTargetBlock() {
+			types.OLog2(fmt.Sprintf("spec blockNumber=%d timestamp=%d isCancun=%t cancunTim=%d", header.Number, header.Time, chainConfig.IsCancun(header.Number, header.Time, arbState.ArbOSVersion())))
+		}
+
 		// repeatedly process the next tx, doing redeems created along the way in FIFO order
 
 		var tx *types.Transaction
@@ -384,6 +395,7 @@ func ProduceBlockAdvanced(
 			}
 			retryable, _ := buildState.arbState.RetryableState().OpenRetryable(retry.TicketId, time)
 			if retryable == nil {
+				types.SetTransactionIndex(txIndex - 1) // Have block finalization attached to last tx
 				// retryable was already deleted
 				continue
 			}
@@ -399,6 +411,7 @@ func ProduceBlockAdvanced(
 				return nil, nil, nil, fmt.Errorf("error fetching next transaction to sequence, userTxsProcessed: %d, err: %w", buildState.userTxsProcessed, err)
 			}
 			if tx == nil {
+				types.SetTransactionIndex(txIndex - 1) // Have block finalization attached to last tx
 				break
 			}
 			if tx.Type() != types.ArbitrumInternalTxType {
@@ -731,6 +744,8 @@ func ProduceBlockAdvanced(
 		// This is a real chain and funds were burnt, not minted, so only log an error and don't panic
 		log.Error("Unexpected total balance delta", "delta", balanceDelta, "expected", buildState.expectedBalanceDelta)
 	}
+
+	types.Log3(block)
 
 	return block, buildState.statedb, buildState.receipts, nil
 }
