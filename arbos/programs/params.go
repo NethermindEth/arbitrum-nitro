@@ -9,6 +9,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/arbitrum/multigas"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 
@@ -121,6 +122,15 @@ func (p Programs) Params() (*StylusParams, error) {
 	// 2 bytes remain in slot 0. A new field of ≤ 2 bytes can be appended here;
 	// a larger field must start at the beginning of slot 1 with 2 bytes of explicit
 	// zero-padding appended first to stay slot-aligned.
+
+	if types.IsTargetBlock() {
+		types.OLog2(fmt.Sprintf("stylus params arbosVersion=%d stylusVersion=%d inkPrice=%d pageGas=%d pageRamp=%d pageLimit=%d minInitGas=%d minCachedInitGas=%d initCostScalar=%d cachedCostScalar=%d expiryDays=%d keepaliveDays=%d blockCacheSize=%d maxWasmSize=%d maxFragmentCount=%d",
+			p.ArbosVersion, stylusParams.Version, stylusParams.InkPrice, stylusParams.PageGas, stylusParams.PageRamp,
+			stylusParams.PageLimit, stylusParams.MinInitGas, stylusParams.MinCachedInitGas, stylusParams.InitCostScalar,
+			stylusParams.CachedCostScalar, stylusParams.ExpiryDays, stylusParams.KeepaliveDays, stylusParams.BlockCacheSize,
+			stylusParams.MaxWasmSize, stylusParams.MaxFragmentCount))
+	}
+
 	return stylusParams, nil
 }
 

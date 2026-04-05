@@ -7,9 +7,11 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/offchainlabs/nitro/callstack"
 	"math"
 	"math/big"
+	"strings"
+
+	"github.com/offchainlabs/nitro/callstack"
 
 	"github.com/ethereum/go-ethereum/arbitrum_types"
 	"github.com/ethereum/go-ethereum/common"
@@ -346,6 +348,10 @@ func ProduceBlockAdvanced(
 	basefee := header.BaseFee
 	time := header.Time
 
+	if types.IsTargetBlock() {
+		types.OLog2(fmt.Sprintf("spec blockNumber=%d timestamp=%d isCancun=%t", header.Number, header.Time, chainConfig.IsCancun(header.Number, header.Time, arbState.ArbOSVersion())))
+	}
+
 	// We'll check that the block can fit each message, so this pool is set to not run out
 	gethGas := core.GasPool(l2pricing.GethBlockGasLimit)
 
@@ -403,6 +409,10 @@ func ProduceBlockAdvanced(
 				isUserTx = true
 				options = conditionalOptions
 			}
+		}
+
+		if types.IsTargetBlock() {
+			types.OLog2(fmt.Sprintf("transaction type=%d", tx.Type()))
 		}
 
 		startRefund := buildState.statedb.GetRefund()
@@ -506,6 +516,9 @@ func ProduceBlockAdvanced(
 				// Ignore this transaction if it's invalid under the state transition function
 				buildState.statedb.RevertToSnapshot(snap)
 				buildState.statedb.ClearTxFilter()
+				if types.IsTargetBlock() {
+					types.OLog2(fmt.Sprintf("transaction revert err=%s snap=%d", err, snap))
+				}
 				return nil, nil, err
 			}
 
@@ -513,6 +526,9 @@ func ProduceBlockAdvanced(
 			if err = extraPostTxFilter(chainConfig, header, buildState.statedb, buildState.arbState, tx, options, sender, l1Info, result); err != nil {
 				buildState.statedb.RevertToSnapshot(snap)
 				buildState.statedb.ClearTxFilter()
+				if types.IsTargetBlock() {
+					types.OLog2(fmt.Sprintf("transaction revert post-filter err=%s snap=%d", err, snap))
+				}
 				return nil, nil, err
 			}
 
@@ -549,6 +565,17 @@ func ProduceBlockAdvanced(
 				}
 			}
 			continue
+		}
+
+		if types.IsTargetBlock() {
+			scheduledTxesLen := 0
+			var resultErr error
+			if result != nil {
+				scheduledTxesLen = len(result.ScheduledTxes)
+				resultErr = result.Err
+			}
+			types.OLog2(fmt.Sprintf("transaction finalized resultScheduledTxesLen=%d resultErr=%s err=%s", scheduledTxesLen, resultErr, err))
+			types.OLog2(fmt.Sprintf("transaction finalized canDiscardTx=%t blockGasLeft=%d userTxsProcessed=%d", sequencingHooks.CanDiscardTx(), buildState.blockGasLeft, buildState.userTxsProcessed))
 		}
 
 		if tx.Type() == types.ArbitrumInternalTxType {
@@ -642,6 +669,19 @@ func ProduceBlockAdvanced(
 		}
 
 		buildState.blockGasLeft = arbmath.SaturatingUSub(buildState.blockGasLeft, computeUsed)
+
+		if types.IsTargetBlock() {
+			logStrings := make([]string, 0)
+			for _, l := range receipt.Logs {
+				logStrings = append(logStrings, fmt.Sprintf("%s:%v", l.Address.String(), l.Topics))
+			}
+			types.OLog2(fmt.Sprintf("receipt gas=%d status=%d logs=%s", receipt.GasUsed, receipt.Status, strings.Join(logStrings, ";")))
+		}
+
+		if types.IsTargetBlock() && types.TraceShowStateRootChange {
+			stateRoot := buildState.statedb.IntermediateRoot(chainConfig.IsEIP158(header.Number))
+			types.OLog2(fmt.Sprintf("transaction newStateRoot=%s", strings.ToLower(stateRoot.String())))
+		}
 
 		buildState.complete = append(buildState.complete, tx)
 		buildState.receipts = append(buildState.receipts, receipt)

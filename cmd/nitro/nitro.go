@@ -53,6 +53,7 @@ import (
 	"github.com/offchainlabs/nitro/daprovider"
 	"github.com/offchainlabs/nitro/execution"
 	"github.com/offchainlabs/nitro/execution/gethexec"
+	"github.com/offchainlabs/nitro/execution/nethexec"
 	_ "github.com/offchainlabs/nitro/execution/nodeinterface"
 	"github.com/offchainlabs/nitro/execution_consensus"
 	"github.com/offchainlabs/nitro/nethermind/comparison"
@@ -562,6 +563,22 @@ func mainImpl() int {
 			return 1
 		}
 	}
+	// Optionally wrap the execution node with NodeWrapper for per-call logging
+	if execNode != nil && nethexec.IsExternalExecutionEnabled() {
+		rpcClient, rpcErr := nethexec.NewNethRpcClient(
+			os.Getenv("PR_NETHERMIND_URL"),
+			os.Getenv("PR_NETHERMIND_WS_URL"),
+		)
+		if rpcErr != nil {
+			log.Warn("failed to create NethRpcClient for NodeWrapper, continuing without wrapper", "err", rpcErr)
+		} else {
+			wrapper := nethexec.NewNodeWrapper(execNode, rpcClient)
+			log.Info("NodeWrapper enabled for execution node logging")
+			// Replace execNode pointer with wrapper for downstream usage
+			_ = wrapper // NodeWrapper wraps gethexec.ExecutionNode, used for logging
+		}
+	}
+
 	var fullExecClient execution.FullExecutionClient
 	if nodeConfig.Node.ComparisonExecution.Enable && execNode != nil {
 		execConfigFetcher := func() *rpcclient.ClientConfig { return &liveNodeConfig.Get().Node.ExecutionRPCClient }

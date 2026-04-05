@@ -4,6 +4,7 @@
 package precompiles
 
 import (
+	"fmt"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/arbitrum/multigas"
@@ -39,6 +40,10 @@ type Context struct {
 }
 
 func (c *Context) Burn(kind multigas.ResourceKind, amount uint64) error {
+	if types.TraceShowBurn && types.IsTargetBlock() {
+		types.OLog2(fmt.Sprintf("context burn=%d", amount))
+	}
+
 	if c.free {
 		return nil
 	}

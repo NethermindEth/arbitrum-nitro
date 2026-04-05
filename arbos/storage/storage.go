@@ -137,6 +137,10 @@ func (s *Storage) Account() common.Address {
 }
 
 func (s *Storage) Get(key common.Hash) (common.Hash, error) {
+	if types.TraceShowArbOSRead && types.IsTargetBlock() {
+		types.OLog2(fmt.Sprintf("arbos read key=%s burned=%d", key.String(), s.burner.Burned()))
+	}
+
 	err := s.burner.Burn(multigas.ResourceKindStorageAccessRead, StorageReadCost)
 	if err != nil {
 		return common.Hash{}, err
@@ -149,6 +153,10 @@ func (s *Storage) Get(key common.Hash) (common.Hash, error) {
 
 // Gets a storage slot for free. Dangerous due to DoS potential.
 func (s *Storage) GetFree(key common.Hash) common.Hash {
+	if types.TraceShowArbOSRead && types.IsTargetBlock() {
+		types.OLog2(fmt.Sprintf("arbos read-free key=%s burned=%d", key.String(), s.burner.Burned()))
+	}
+
 	return s.db.GetState(s.account, s.mapAddress(key))
 }
 

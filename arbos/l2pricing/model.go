@@ -8,6 +8,7 @@ import (
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/arbitrum/multigas"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/params"
 
 	"github.com/offchainlabs/nitro/arbos/storage"
@@ -45,6 +46,9 @@ func (ps *L2PricingState) GasModelToUse() (GasModel, error) {
 			return GasModelUnknown, err
 		}
 		if constraintsLength > 0 {
+			if types.IsTargetBlock() {
+				types.OLog2(fmt.Sprintf("l2Pricing GasModelToUse gasModel=%d arbosVersion=%d", GasModelMultiGasConstraints, ps.ArbosVersion))
+			}
 			return GasModelMultiGasConstraints, nil
 		}
 	}
@@ -54,9 +58,16 @@ func (ps *L2PricingState) GasModelToUse() (GasModel, error) {
 			return GasModelUnknown, err
 		}
 		if constraintsLength > 0 {
+			if types.IsTargetBlock() {
+				types.OLog2(fmt.Sprintf("l2Pricing GasModelToUse gasModel=%d arbosVersion=%d", GasModelSingleGasConstraints, ps.ArbosVersion))
+			}
 			return GasModelSingleGasConstraints, nil
 		}
 	}
+	if types.IsTargetBlock() {
+		types.OLog2(fmt.Sprintf("l2Pricing GasModelToUse gasModel=%d arbosVersion=%d", GasModelLegacy, ps.ArbosVersion))
+	}
+
 	return GasModelLegacy, nil
 }
 
@@ -99,7 +110,13 @@ func (ps *L2PricingState) updateLegacyBacklog(op BacklogOperation, usedGas uint6
 	if err != nil {
 		return err
 	}
+	oldBacklog := backlog
 	backlog = applyGasDelta(op, backlog, usedGas)
+
+	if types.IsTargetBlock() {
+		types.OLog2(fmt.Sprintf("l2Pricing updateLegacyBacklog op=%d usedGas=%d backlog=%d newBacklog=%d arbosVersion=%d", op, usedGas, oldBacklog, backlog, ps.ArbosVersion))
+	}
+
 	return ps.SetGasBacklog(backlog)
 }
 
@@ -114,7 +131,13 @@ func (ps *L2PricingState) updateSingleGasConstraintsBacklogs(op BacklogOperation
 		if err != nil {
 			return err
 		}
-		err = constraint.SetBacklog(applyGasDelta(op, backlog, usedGas))
+		newBacklog := applyGasDelta(op, backlog, usedGas)
+
+		if types.IsTargetBlock() {
+			types.OLog2(fmt.Sprintf("l2Pricing updateSingleGasConstraintsBacklogs op=%d usedGas=%d backlog=%d newBacklog=%d constraint=%d arbosVersion=%d", op, usedGas, backlog, newBacklog, i, ps.ArbosVersion))
+		}
+
+		err = constraint.SetBacklog(newBacklog)
 		if err != nil {
 			return err
 		}
@@ -153,6 +176,9 @@ func applyGasDelta(op BacklogOperation, backlog uint64, delta uint64) uint64 {
 func (ps *L2PricingState) BacklogUpdateCost() uint64 {
 	// Charge static price for any pricer starting from ArbosVersion_MultiGasConstraintsVersion
 	if ps.ArbosVersion >= params.ArbosVersion_MultiGasConstraintsVersion {
+		if types.IsTargetBlock() {
+			types.OLog2(fmt.Sprintf("l2Pricing cost=%d arbosVersion=%d", MultiConstraintStaticBacklogUpdateCost, ps.ArbosVersion))
+		}
 		return MultiConstraintStaticBacklogUpdateCost
 	}
 
@@ -171,6 +197,11 @@ func (ps *L2PricingState) BacklogUpdateCost() uint64 {
 			result += storage.StorageReadCost // read length to traverse
 			// Update backlog (read+write) for each constraint
 			result += uint64(constraintsLength) * (storage.StorageReadCost + storage.StorageWriteCost)
+
+			if types.IsTargetBlock() {
+				types.OLog2(fmt.Sprintf("l2Pricing cost=%d arbosVersion=%d", result, ps.ArbosVersion))
+			}
+
 			return result
 		}
 		// No return here, fallthrough to legacy costs
@@ -178,6 +209,10 @@ func (ps *L2PricingState) BacklogUpdateCost() uint64 {
 
 	// Legacy pricer costs
 	result += storage.StorageReadCost + storage.StorageWriteCost
+
+	if types.IsTargetBlock() {
+		types.OLog2(fmt.Sprintf("l2Pricing cost=%d arbosVersion=%d", result, ps.ArbosVersion))
+	}
 
 	return result
 }
