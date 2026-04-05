@@ -5,9 +5,8 @@ package programs
 
 import (
 	"fmt"
-	"strings"
-
 	"strconv"
+	"strings"
 
 	"github.com/holiman/uint256"
 

@@ -366,8 +366,7 @@ func ProduceBlockAdvanced(
 	}
 
 	types.SetCurrentBlockNumber(lastBlockHeader.Number.Int64() + 1)
-	var txIndex int64
-	txIndex = -1
+	var txIndex int64 = -1
 
 	for {
 		txIndex++

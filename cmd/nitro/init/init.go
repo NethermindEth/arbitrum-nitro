@@ -1066,7 +1066,7 @@ func GetConsensusParsedInitMsg(ctx context.Context, parentChainReaderEnabled boo
 				return nil, fmt.Errorf("incompatible chain config read from init message in L1 inbox: %w", err)
 			}
 		}
-		log.Info("Read serialized chain config from init message", "json", string(parsedInitMessage.SerializedChainConfig))
+		log.Info("Read serialized chain config from init message", "json", string(parsedInitMessage.SerializedChainConfig), "initialL1BaseFee", parsedInitMessage.InitialL1BaseFee.String())
 	} else {
 		serializedChainConfig, err := json.Marshal(chainConfig)
 		if err != nil {

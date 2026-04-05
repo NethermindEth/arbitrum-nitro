@@ -122,7 +122,13 @@ func (p Programs) ActivateProgram(evm *vm.EVM, address common.Address, runCtx *c
 			strings.ToLower(address.Hex()), time, runCtx.RunModeMetricName(), debugMode))
 	}
 
-	if statedb.HasSelfDestructed(address) {
+	hasSelfDestructed := statedb.HasSelfDestructed(address)
+	if types.IsTargetBlock() {
+		accountExists := statedb.Exist(address)
+		types.OLog2(fmt.Sprintf("stylus activateProgram deadCheck isDead=%t accountExists=%t codeHash=%s address=%s",
+			hasSelfDestructed, accountExists, codeHash.Hex(), strings.ToLower(address.Hex())))
+	}
+	if hasSelfDestructed {
 		return 0, codeHash, common.Hash{}, nil, false, errors.New("self destructed")
 	}
 

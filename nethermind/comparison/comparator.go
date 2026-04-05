@@ -114,13 +114,13 @@ func compareResults[T any](op string, intRes T, intErr error, extRes T, extErr e
 	switch {
 	case intErr != nil && extErr != nil:
 		if intErr.Error() != extErr.Error() {
-			return fmt.Errorf("both operations failed with different errors: internal=%v external=%v", intErr, extErr)
+			return fmt.Errorf("both operations failed with different errors: internal=%w external=%w", intErr, extErr)
 		}
 		return nil
 	case intErr != nil && extErr == nil:
-		return fmt.Errorf("internal operation failed but external succeeded: internal=%v", intErr)
+		return fmt.Errorf("internal operation failed but external succeeded: internal=%w", intErr)
 	case intErr == nil && extErr != nil:
-		return fmt.Errorf("external operation failed but internal succeeded: external=%v", extErr)
+		return fmt.Errorf("external operation failed but internal succeeded: external=%w", extErr)
 	default:
 		if !cmp.Equal(intRes, extRes, cmpOpts...) {
 			diff := cmp.Diff(intRes, extRes, cmpOpts...)
