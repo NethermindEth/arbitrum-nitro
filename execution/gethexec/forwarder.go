@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os"
 	"regexp"
 	"sync"
 	"sync/atomic"
@@ -114,14 +113,6 @@ func NewForwarder(targets []string, config *ForwarderConfig) *TxForwarder {
 		TLSHandshakeTimeout:   5 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 	}
-
-	overrideURL, exists := os.LookupEnv("PR_OVERRIDE_FORWARDER_URL")
-	if exists && overrideURL != "" {
-		for i := range targets {
-			targets[i] = overrideURL
-		}
-	}
-
 	return &TxForwarder{
 		targets:               targets,
 		timeout:               config.ConnectionTimeout,

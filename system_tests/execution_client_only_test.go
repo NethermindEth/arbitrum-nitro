@@ -4,6 +4,7 @@
 package arbtest
 
 import (
+	"context"
 	"math/big"
 	"testing"
 	"time"
@@ -11,53 +12,33 @@ import (
 	"github.com/offchainlabs/nitro/arbnode"
 )
 
-func testExecutionClientOnly(t *testing.T, executionClientMode ExecutionClientMode) {
-	ctx := t.Context()
+func TestExecutionClientOnly(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	builder := NewNodeBuilder(ctx).DefaultConfig(t, true)
 	cleanup := builder.Build(t)
 	defer cleanup()
 	seqTestClient := builder.L2
 
-	replicaConfig := arbnode.ConfigDefaultL1NonSequencerTest()
-	replicaParams := &SecondNodeParams{
-		nodeConfig:             replicaConfig,
-		useExecutionClientOnly: true,
-		executionClientMode:    executionClientMode,
-	}
-
-	replicaTestClient, replicaCleanup := builder.Build2ndNode(t, replicaParams)
-	defer replicaCleanup()
-	replicaClient := replicaTestClient.Client
+	replicaExecutionClientOnlyConfig := arbnode.ConfigDefaultL1NonSequencerTest()
+	replicaExecutionClientOnlyTestClient, replicaExecutionClientOnlyCleanup := builder.Build2ndNode(t, &SecondNodeParams{nodeConfig: replicaExecutionClientOnlyConfig, useExecutionClientOnly: true})
+	defer replicaExecutionClientOnlyCleanup()
 
 	builder.L2Info.GenerateAccount("User2")
-	for range 3 {
+	for i := 0; i < 3; i++ {
 		tx := builder.L2Info.PrepareTx("Owner", "User2", builder.L2Info.TransferGas, big.NewInt(1e12), nil)
 		err := seqTestClient.Client.SendTransaction(ctx, tx)
 		Require(t, err)
 		_, err = seqTestClient.EnsureTxSucceeded(tx)
 		Require(t, err)
-
-		_, err = WaitForTx(ctx, replicaClient, tx.Hash(), time.Second*15)
+		_, err = WaitForTx(ctx, replicaExecutionClientOnlyTestClient.Client, tx.Hash(), time.Second*15)
 		Require(t, err)
 	}
 
-	expectedBalance := big.NewInt(3e12)
-	replicaBalance, err := replicaClient.BalanceAt(ctx, builder.L2Info.GetAddress("User2"), nil)
+	replicaBalance, err := replicaExecutionClientOnlyTestClient.Client.BalanceAt(ctx, builder.L2Info.GetAddress("User2"), nil)
 	Require(t, err)
-	if replicaBalance.Cmp(expectedBalance) != 0 {
-		t.Fatalf("Final balance mismatch. Got: %s, expected: %s", replicaBalance, expectedBalance)
+	if replicaBalance.Cmp(big.NewInt(3e12)) != 0 {
+		t.Fatal("Unexpected balance:", replicaBalance)
 	}
-}
-
-func TestExecutionClientOnlyInternal(t *testing.T) {
-	testExecutionClientOnly(t, ExecutionClientModeInternal)
-}
-
-func TestExecutionClientOnlyExternal(t *testing.T) {
-	testExecutionClientOnly(t, ExecutionClientModeExternal)
-}
-
-func TestExecutionClientOnlyComparison(t *testing.T) {
-	testExecutionClientOnly(t, ExecutionClientModeComparison)
 }

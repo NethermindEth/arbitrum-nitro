@@ -169,18 +169,9 @@ func (p Programs) ActivateProgram(evm *vm.EVM, address common.Address, runCtx *c
 			wasmHash.Hex(), pageLimit, strings.Join(targetNames, ",")))
 	}
 
-	info, asmMap, err := activateProgram(statedb, address, codeHash, wasm, pageLimit, stylusVersion, p.ArbosVersion, debugMode, burner, runCtx)
+	info, err := activateProgram(statedb, address, codeHash, wasm, pageLimit, stylusVersion, p.ArbosVersion, debugMode, burner, runCtx)
 	if err != nil {
 		return 0, codeHash, common.Hash{}, nil, true, err
-	}
-
-	if types.IsTargetBlock() {
-		asmMapHashes := make([]string, 0, len(asmMap))
-		for target, asm := range asmMap {
-			asmHash := crypto.Keccak256Hash(asm)
-			asmMapHashes = append(asmMapHashes, fmt.Sprintf("%s:%s", target, asmHash.Hex()))
-		}
-		types.OLog2(fmt.Sprintf("stylus activateProgram asmMap=%s", strings.Join(asmMapHashes, ",")))
 	}
 
 	if types.IsTargetBlock() {

@@ -526,16 +526,7 @@ func (n *ExecutionNode) StopAndWait() {
 }
 
 func (n *ExecutionNode) DigestMessage(num arbutil.MessageIndex, msg *arbostypes.MessageWithMetadata, msgForPrefetch *arbostypes.MessageWithMetadata) containers.PromiseInterface[*execution.MessageResult] {
-	promise := containers.NewPromise[*execution.MessageResult](nil)
-	go func() {
-		res, err := n.ExecEngine.DigestMessage(num, msg, msgForPrefetch)
-		if err != nil {
-			promise.ProduceError(err)
-			return
-		}
-		promise.Produce(res)
-	}()
-	return &promise
+	return containers.NewReadyPromise(n.ExecEngine.DigestMessage(num, msg, msgForPrefetch))
 }
 func (n *ExecutionNode) Reorg(newHeadMsgIdx arbutil.MessageIndex, newMessages []arbostypes.MessageWithMetadataAndBlockInfo, oldMessages []*arbostypes.MessageWithMetadata) containers.PromiseInterface[[]*execution.MessageResult] {
 	return containers.NewReadyPromise(n.ExecEngine.Reorg(newHeadMsgIdx, newMessages, oldMessages))

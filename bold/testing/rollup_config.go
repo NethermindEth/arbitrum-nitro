@@ -112,6 +112,7 @@ func GenerateRollupConfig(
 		AnyTrustFastConfirmer:        anyTrustFastConfirmer,
 		NumBigStepLevel:              1,
 		ChallengeGracePeriodBlocks:   gracePeriod,
+		DataCostEstimate:             big.NewInt(0),
 	}
 	for _, o := range opts {
 		o(&cfg)

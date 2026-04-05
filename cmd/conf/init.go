@@ -45,8 +45,6 @@ type InitConfig struct {
 	ReorgToMessageBatch           int64         `koanf:"reorg-to-message-batch"`
 	ReorgToBlockBatch             int64         `koanf:"reorg-to-block-batch"`
 	ValidateGenesisAssertion      bool          `koanf:"validate-genesis-assertion"`
-	BootstrapFromExecution        bool          `koanf:"bootstrap-from-execution"`
-	StartBlock                    uint64        `koanf:"start-block"`
 }
 
 var InitConfigDefault = InitConfig{
@@ -79,9 +77,6 @@ var InitConfigDefault = InitConfig{
 	ReorgToMessageBatch:           -1,
 	ReorgToBlockBatch:             -1,
 	ValidateGenesisAssertion:      true,
-
-	BootstrapFromExecution: false,
-	StartBlock:             0,
 }
 
 func InitConfigAddOptions(prefix string, f *pflag.FlagSet) {
@@ -94,7 +89,7 @@ func InitConfigAddOptions(prefix string, f *pflag.FlagSet) {
 	f.Duration(prefix+".download-poll", InitConfigDefault.DownloadPoll, "how long to wait between polling attempts")
 	f.Bool(prefix+".dev-init", InitConfigDefault.DevInit, "init with dev data (1 account with balance) instead of file import")
 	f.String(prefix+".dev-init-address", InitConfigDefault.DevInitAddress, "Address of dev-account. Leave empty to use the dev-wallet.")
-	f.Uint64(prefix+".dev-init-blocknum", InitConfigDefault.DevInitBlockNum, "Index of preinit blocks. Must exist in ancient database.")
+	f.Uint64(prefix+".dev-init-blocknum", InitConfigDefault.DevInitBlockNum, "Number of preinit blocks. Must exist in ancient database.")
 	f.Uint64(prefix+".dev-max-code-size", InitConfigDefault.DevMaxCodeSize, "Max code size for dev accounts")
 	f.Bool(prefix+".empty", InitConfigDefault.Empty, "init with empty state")
 	f.Bool(prefix+".import-wasm", InitConfigDefault.ImportWasm, "if set, import the wasm directory when downloading a database (contains executable code - only use with highly trusted source)")
@@ -118,9 +113,6 @@ func InitConfigAddOptions(prefix string, f *pflag.FlagSet) {
 		"\"false\"- do not rebuild on startup",
 	)
 	f.Bool(prefix+".validate-genesis-assertion", InitConfigDefault.ValidateGenesisAssertion, "tests genesis assertion posted on parent chain against the genesis block created on init")
-
-	f.Bool(prefix+".bootstrap-from-execution", InitConfigDefault.BootstrapFromExecution, "bootstrap chain database from execution client instead of downloading snapshot")
-	f.Uint64(prefix+".start-block", InitConfigDefault.StartBlock, "block number to start from when bootstrapping from execution client (required when bootstrap-from-execution is true)")
 }
 
 func (c *InitConfig) Validate() error {
@@ -152,34 +144,6 @@ func (c *InitConfig) Validate() error {
 	if c.RebuildLocalWasm != "auto" && c.RebuildLocalWasm != "force" && c.RebuildLocalWasm != "false" {
 		return fmt.Errorf("invalid value of rebuild-local-wasm, want: auto or force or false, got: %s", c.RebuildLocalWasm)
 	}
-
-	if c.BootstrapFromExecution {
-		// StartBlock == 0 is valid for chains with genesis at block 0, but bootstrap is typically
-		// used for starting at a later block. If starting from genesis (block 0), standard init
-		// methods should be used instead of bootstrap.
-		if c.StartBlock == 0 {
-			return fmt.Errorf("start-block must be greater than 0 when bootstrap-from-execution is enabled")
-		}
-		// Check for conflicting init methods
-		conflictingMethods := []bool{
-			c.Url != "",
-			c.Latest != "",
-			c.DevInit,
-			c.Empty,
-			c.ImportFile != "",
-			c.GenesisJsonFile != "",
-		}
-		conflictCount := 0
-		for _, conflict := range conflictingMethods {
-			if conflict {
-				conflictCount++
-			}
-		}
-		if conflictCount > 0 {
-			return fmt.Errorf("bootstrap-from-execution cannot be used with other init methods (url, latest, dev-init, empty, import-file, genesis-json-file)")
-		}
-	}
-
 	return nil
 }
 
