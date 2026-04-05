@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"github.com/offchainlabs/nitro/callstack"
 	"math/big"
 	"reflect"
 	"sort"
@@ -514,7 +513,6 @@ func MakePrecompile(metadata *bind.MetaData, implementer interface{}) (addr, *Pr
 }
 
 func Precompiles() map[addr]ArbosPrecompile {
-	callstack.LogCallStack("")
 	contracts := make(map[addr]ArbosPrecompile)
 
 	insert := func(address addr, impl ArbosPrecompile) *Precompile {

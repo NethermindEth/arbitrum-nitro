@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/offchainlabs/nitro/callstack"
 	"strconv"
 
 	"github.com/holiman/uint256"
@@ -71,8 +70,6 @@ func newApiClosures(
 	readOnly := evm.ReadOnly()
 	db := evm.StateDB
 	chainConfig := evm.ChainConfig()
-
-	callstack.LogCallStack("")
 
 	getBytes32 := func(key common.Hash) (common.Hash, uint64) {
 		mgCost := vm.WasmStateLoadCost(db, actingAddress, key)
@@ -376,8 +373,6 @@ func newApiClosures(
 				crash("extra input")
 			}
 		}()
-
-		callstack.LogCallStack("return")
 
 		takeAddress := func() common.Address {
 			return common.BytesToAddress(takeInput(20, "expected address"))

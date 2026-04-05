@@ -9,8 +9,6 @@ import (
 	"math/big"
 	"strings"
 
-	"github.com/offchainlabs/nitro/callstack"
-
 	"github.com/ethereum/go-ethereum/crypto"
 
 	"github.com/holiman/uint256"
@@ -116,8 +114,6 @@ func takeFunds(pool *big.Int, take *big.Int) *big.Int {
 }
 
 func (p *TxProcessor) ExecuteWASM(scope *vm.ScopeContext, input []byte, evm *vm.EVM) ([]byte, error) {
-	callstack.LogCallStack("")
-
 	contract := scope.Contract
 	acting := contract.Address()
 

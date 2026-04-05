@@ -85,7 +85,6 @@ COPY ./statetransfer ./statetransfer
 COPY ./util ./util
 COPY ./wavmio ./wavmio
 COPY ./zeroheavy ./zeroheavy
-COPY ./callstack ./callstack
 COPY ./contracts-legacy/package.json ./contracts-legacy/yarn.lock ./contracts-legacy/
 COPY ./contracts-legacy/src/precompiles/ ./contracts-legacy/src/precompiles/
 COPY ./contracts-local/src/precompiles/ ./contracts-local/src/precompiles/
@@ -226,7 +225,6 @@ RUN export DEBIAN_FRONTEND=noninteractive && \
     apt-get install -y wabt
 COPY go.mod go.sum ./
 COPY go-ethereum/go.mod go-ethereum/go.sum go-ethereum/
-COPY callstack/go.mod callstack/go.sum callstack/
 RUN go mod download
 COPY . ./
 COPY --from=contracts-builder workspace/contracts/build/ contracts/build/

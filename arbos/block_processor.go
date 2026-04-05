@@ -11,8 +11,6 @@ import (
 	"math/big"
 	"strings"
 
-	"github.com/offchainlabs/nitro/callstack"
-
 	"github.com/ethereum/go-ethereum/arbitrum_types"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
@@ -305,8 +303,6 @@ func ProduceBlockAdvanced(
 	runCtx *core.MessageRunContext,
 	exposeMultiGas bool,
 ) (*types.Block, *state.StateDB, types.Receipts, error) {
-	callstack.LogCallStack("")
-
 	arbState, err := arbosState.OpenSystemArbosState(statedb, nil, false)
 	if err != nil {
 		return nil, nil, nil, err
