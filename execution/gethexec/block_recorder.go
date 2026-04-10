@@ -108,6 +108,7 @@ func (r *BlockRecorder) RecordBlockCreation(
 	wasmTargets []rawdb.WasmTarget,
 ) (*execution.RecordResult, error) {
 	blockNum := r.execEngine.MessageIndexToBlockNumber(pos)
+	println("--- RecordBlockCreation for block: ", blockNum, " at index ", pos)
 
 	var prevHeader *types.Header
 	if pos != 0 {
@@ -245,6 +246,7 @@ func (r *BlockRecorder) updateValidCandidateHdr(hdr *types.Header) {
 func (r *BlockRecorder) MarkValid(pos arbutil.MessageIndex, resultHash common.Hash) {
 	r.validHdrLock.Lock()
 	defer r.validHdrLock.Unlock()
+	fmt.Printf("--- MarkValid, num: %d and resultHash: %s\n", pos, resultHash.Hex())
 	if r.validHdrCandidate == nil {
 		return
 	}
@@ -270,6 +272,7 @@ func (r *BlockRecorder) MarkValid(pos arbutil.MessageIndex, resultHash common.Ha
 	r.recordingDatabase.Dereference(r.validHdr)
 	r.validHdr = r.validHdrCandidate
 	r.validHdrCandidate = nil
+	fmt.Printf("--- header marked as valid: number %s hash %s (validated at %d)\n", r.validHdr.Number.String(), r.validHdr.Hash().Hex(), pos)
 }
 
 // TODO: use config
@@ -314,6 +317,7 @@ func (r *BlockRecorder) RecordingDBReferenceCount() int64 {
 }
 
 func (r *BlockRecorder) PrepareForRecord(ctx context.Context, start, end arbutil.MessageIndex) error {
+	fmt.Printf("--- PrepareForRecord [%d-%d] ---\n", start, end)
 	var references []*types.Header
 	if end < start {
 		return fmt.Errorf("illegal range start %d > end %d", start, end)
@@ -371,8 +375,10 @@ func (r *BlockRecorder) WriteValidStateToDb() error {
 	r.validHdrLock.Lock()
 	defer r.validHdrLock.Unlock()
 	if r.validHdr == nil {
+		fmt.Printf("--- WriteValidStateToDb called but no valid header to set\n")
 		return nil
 	}
+	fmt.Printf("--- WriteValidStateToDb called and storing: number %s (state root %s)\n", r.validHdr.Number.String(), r.validHdr.Root.Hex())
 	err := r.recordingDatabase.WriteStateToDatabase(r.validHdr)
 	r.recordingDatabase.Dereference(r.validHdr)
 	return err

@@ -936,6 +936,8 @@ func (s *ExecutionEngine) createBlockFromNextMessage(msg *arbostypes.MessageWith
 		s.exposeMultiGas,
 	)
 
+	println("--- BlockNumber: ", block.Number().String())
+
 	return block, statedb, receipts, err
 }
 
