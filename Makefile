@@ -166,11 +166,13 @@ CBROTLI_WASM_BUILD_ARGS ?=-d
 
 # Data directory (persistent, in repo)
 DATA_DIR := $(CURDIR)/.data
+EXTERNAL_DIR := /Volumes/S990Pro
 
 # Database paths (default, overridden by network-specific targets)
 NITRO_EL_DB ?= $(DATA_DIR)/nitro/default/el
 NITRO_CL_DB ?= $(DATA_DIR)/nitro/default/cl
-JWT_SECRET ?= $(HOME)/.arbitrum/jwt.hex
+JWT_SECRET = /Users/gugz/.arbitrum/jwt.hex
+# JWT_SECRET ?= $(HOME)/.arbitrum/jwt.hex
 
 # Snapshot cache (shared across projects)
 SNAPSHOT_CACHE_DIR := $(HOME)/.cache/blockchain-snapshots/nitro
@@ -180,6 +182,7 @@ MAINNET_GENESIS_SNAPSHOT_URL := https://snapshot.arbitrum.foundation/arb1/$(MAIN
 # Network defaults (can be overridden)
 NETWORK ?= sepolia
 
+-include ../../nethermind-arbitrum/.env
 # Sepolia configuration
 ifeq ($(NETWORK),sepolia)
   CHAIN_ID := 421614
@@ -228,6 +231,29 @@ init-el: $(output_root)/bin/nitro ## Initialize EL with genesis from L1 (then qu
 		--parent-chain.connection.url=$(L1_RPC) \
 		--parent-chain.blob-client.beacon-url=$(L1_BEACON) \
 		--init.latest=genesis \
+		--init.then-quit=true \
+		--init.validate-genesis-assertion=false \
+		--node.sequencer=false \
+		--node.batch-poster.enable=false \
+		--node.staker.enable=false \
+		--node.feed.input.url="" \
+		--auth.jwtsecret=$(JWT_SECRET)
+
+
+.PHONY: init-el-with-validation
+init-el-with-validation: $(output_root)/bin/nitro ## Initialize EL with genesis from L1 (then quit)
+	@echo "Initializing Nitro EL for $(NETWORK) (Chain ID: $(CHAIN_ID))..."
+	@echo "  L1 RPC: $(L1_RPC)"
+	@echo "  Expected genesis: $(GENESIS_HASH)"
+	@rm -rf $(NITRO_EL_DB)/*
+	@mkdir -p $(NITRO_EL_DB)
+	$(output_root)/bin/nitro \
+		--chain.id=$(CHAIN_ID) \
+		--parent-chain.id=$(PARENT_CHAIN_ID) \
+		--persistent.global-config=$(NITRO_EL_DB) \
+		--parent-chain.connection.url=$(L1_RPC) \
+		--parent-chain.blob-client.beacon-url=$(L1_BEACON) \
+		--init.empty=true \
 		--init.then-quit=true \
 		--init.validate-genesis-assertion=false \
 		--node.sequencer=false \
@@ -322,6 +348,44 @@ run-cl-comparison: $(output_root)/bin/nitro ## Run CL in comparison mode (Nitro 
 		--http.addr=0.0.0.0 \
 		--http.port=8558
 
+# 	@rm -rf $(NITRO_CL_DB)/*
+.PHONY: run-cl-comparison-with-validation
+run-cl-comparison-with-validation: $(output_root)/bin/nitro ## Run CL in comparison mode with validation (Nitro EL + Nethermind EL)
+	@echo "Starting Nitro CL in COMPARISON MODE for $(NETWORK)..."
+	@echo "  Chain ID: $(CHAIN_ID)"
+	@echo "  Primary EL (Nitro): ws://localhost:20552"
+	@echo "  Secondary EL (Nethermind): http://localhost:20551"
+	@mkdir -p $(NITRO_CL_DB)
+	$(output_root)/bin/nitro \
+		--chain.id=$(CHAIN_ID) \
+		--parent-chain.id=$(PARENT_CHAIN_ID) \
+		--persistent.global-config=$(NITRO_CL_DB) \
+		--parent-chain.connection.url=$(L1_RPC) \
+		--parent-chain.blob-client.beacon-url=$(L1_BEACON) \
+		--node.execution-rpc-client.url=ws://localhost:20552 \
+		--node.comparison-execution.enable=true \
+		--node.comparison-execution.secondary-rpc-client.url=http://localhost:20551 \
+		--node.comparison-execution.secondary-rpc-client.jwtsecret=$(JWT_SECRET) \
+		--init.empty=true \
+		--init.validate-genesis-assertion=false \
+		--node.sequencer=false \
+		--node.batch-poster.enable=false \
+		--node.staker.enable=false \
+		--node.feed.input.url="" \
+		--auth.jwtsecret=$(JWT_SECRET) \
+		--ws.addr=0.0.0.0 \
+		--ws.port=8559 \
+		--http.addr=0.0.0.0 \
+		--http.port=8558 \
+		--node.block-validator.enable=true \
+		--node.block-validator.validation-server.url=self-auth \
+		--node.block-validator.current-module-root=latest \
+		--validation.wasm.enable-wasmroots-check=false \
+		--validation.wasm.root-path=./target/machines \
+		--validation.jit.jit-path=./target/bin/jit \
+		--validation.use-jit=true \
+		--log-level=debug
+
 .PHONY: dev-help
 dev-help: ## Show development targets help
 	@echo "Nitro Development Targets"
@@ -388,6 +452,18 @@ run-cl-sepolia: $(output_root)/bin/nitro ## Run Sepolia CL connecting to EL
 .PHONY: run-cl-comparison-sepolia
 run-cl-comparison-sepolia: $(output_root)/bin/nitro ## Run Sepolia CL in comparison mode
 	@$(MAKE) run-cl-comparison NETWORK=sepolia NITRO_CL_DB=$(DATA_DIR)/nitro/sepolia/cl
+
+.PHONY: init-el-sepolia-with-validation
+init-el-sepolia-with-validation: $(output_root)/bin/nitro ## Initialize Sepolia EL with genesis from L1
+	@$(MAKE) init-el-with-validation NETWORK=sepolia NITRO_EL_DB=$(EXTERNAL_DIR)/sepolia/nitro-el
+
+.PHONY: run-el-sepolia-with-validation
+run-el-sepolia-with-validation: $(output_root)/bin/nitro ## Run Sepolia EL in execution-only mode with validation
+	@$(MAKE) run-el NETWORK=sepolia NITRO_EL_DB=$(EXTERNAL_DIR)/sepolia/nitro-el
+
+.PHONY: run-cl-comparison-sepolia-with-validation
+run-cl-comparison-sepolia-with-validation: $(output_root)/bin/nitro ## Run Sepolia CL in comparison mode with validation
+	@$(MAKE) run-cl-comparison-with-validation NETWORK=sepolia NITRO_CL_DB=$(EXTERNAL_DIR)/sepolia/nitro-cl
 
 # ============================================================================
 # Explicit Mainnet Targets
@@ -496,6 +572,9 @@ all: build build-replay-env test-gen-proofs
 .PHONY: build
 build: $(patsubst %,$(output_root)/bin/%, nitro deploy relay daprovider anytrustserver autonomous-auctioneer bidder-client anytrusttool blobtool el-proxy mockexternalsigner seq-coordinator-invalidate nitro-val seq-coordinator-manager dbconv genesis-generator transaction-filterer)
 	@printf $(done)
+
+.PHONY: build-nitro
+build-nitro: $(patsubst %,$(output_root)/bin/%, nitro)
 
 .PHONY: build-node-deps
 build-node-deps: $(go_source) build-prover-header build-prover-lib build-jit .make/solgen .make/cbrotli-lib
