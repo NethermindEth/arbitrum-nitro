@@ -137,6 +137,8 @@ func compareRecordResult(intRes *execution.RecordResult, extRes *execution.Recor
 		}
 	}
 
+	fmt.Printf("Preimages count: nitro=%d, nmc=%d\n", len(intRes.Preimages), len(extRes.Preimages))
+
 	// Compare all other fields as normal (ignore Preimages contents after subset check).
 	var intCopy, extCopy *execution.RecordResult
 	if intRes != nil {
