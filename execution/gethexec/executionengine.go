@@ -30,6 +30,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/ethereum/go-ethereum/arbitrum/filter"
 	"github.com/ethereum/go-ethereum/arbitrum/multigas"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
@@ -111,13 +112,10 @@ func NewDelayedFilteringSequencingHooks(txes types.Transactions, ef *eventfilter
 	}
 }
 
-// PostTxFilter touches To/From addresses and checks IsAddressFiltered.
-// Collects tx hashes that touch filtered addresses but are not in the onchain filter.
-// Does not return an error - the caller checks FilteredTxHashes after block production.
-func (f *DelayedFilteringSequencingHooks) PostTxFilter(header *types.Header, db *state.StateDB, a *arbosState.ArbosState, tx *types.Transaction, sender common.Address, dataGas uint64, result *core.ExecutionResult) error {
-	db.TouchAddress(sender)
+func touchAddresses(db *state.StateDB, tx *types.Transaction, sender common.Address) {
+	db.TouchAddress(&filter.FilteredAddressRecord{Address: sender, FilterReason: filter.FilterReason{Reason: filter.ReasonFrom, EventRuleMatch: nil}})
 	if tx.To() != nil {
-		db.TouchAddress(*tx.To())
+		db.TouchAddress(&filter.FilteredAddressRecord{Address: *tx.To(), FilterReason: filter.FilterReason{Reason: filter.ReasonTo, EventRuleMatch: nil}})
 	}
 	// For tx types that alias the sender (unsigned contract txs, retryables),
 	// also check the original L1 address. The sender in the tx is already
@@ -125,12 +123,27 @@ func (f *DelayedFilteringSequencingHooks) PostTxFilter(header *types.Header, db 
 	// original (non-aliased) addresses.
 	txType := tx.Type()
 	if arbosutil.DoesTxTypeAlias(&txType) {
-		db.TouchAddress(arbosutil.InverseRemapL1Address(sender))
+		db.TouchAddress(&filter.FilteredAddressRecord{Address: arbosutil.InverseRemapL1Address(sender), FilterReason: filter.FilterReason{Reason: filter.ReasonDealiasedFrom, EventRuleMatch: nil}})
 	}
 	touchRetryableAddresses(db, tx)
+}
+
+// PostTxFilter touches To/From addresses and checks IsAddressFiltered.
+// Collects tx hashes that touch filtered addresses but are not in the onchain filter.
+// For redeems, returns ErrArbTxFilter to trigger group rollback.
+func (f *DelayedFilteringSequencingHooks) PostTxFilter(header *types.Header, db *state.StateDB, a *arbosState.ArbosState, tx *types.Transaction, sender common.Address, dataGas uint64, result *core.ExecutionResult) error {
+	if tx.Type() == types.ArbitrumInternalTxType {
+		return nil
+	}
+	touchAddresses(db, tx, sender)
 	applyEventFilter(f.eventFilter, db)
 
-	if db.IsAddressFiltered() {
+	if filtered, _ := db.IsAddressFiltered(); filtered {
+		// For redeems, return the filter error so the block processor can
+		// trigger a group rollback.
+		if tx.Type() == types.ArbitrumRetryTxType {
+			return state.ErrArbTxFilter
+		}
 		// If the STF already handled this tx via the onchain filter mechanism,
 		// the filter entry has been cleaned up and we're done.
 		var filteredErr *core.ErrFilteredTx
@@ -144,14 +157,27 @@ func (f *DelayedFilteringSequencingHooks) PostTxFilter(header *types.Header, db 
 	return nil
 }
 
+func (f *DelayedFilteringSequencingHooks) SupportsGroupRollback() bool { return true }
+
+// TxFailed extracts the originating tx hash from ErrFilteredCascadingRedeem
+// and appends it to FilteredTxHashes. After ProduceBlockAdvanced returns, the
+// existing check fires ErrFilteredDelayedMessage, causing the delayed sequencer
+// to halt and the transaction-filterer to add the hash to the onchain filter.
+func (f *DelayedFilteringSequencingHooks) TxFailed(err error) {
+	var cascadingErr *arbos.ErrFilteredCascadingRedeem
+	if errors.As(err, &cascadingErr) {
+		f.FilteredTxHashes = append(f.FilteredTxHashes, cascadingErr.OriginatingTxHash)
+	}
+}
+
 func applyEventFilter(ef *eventfilter.EventFilter, db *state.StateDB) {
 	if ef == nil {
 		return
 	}
 	logs := db.GetCurrentTxLogs()
 	for _, l := range logs {
-		for _, addr := range ef.AddressesForFiltering(l.Topics, l.Data, l.Address, common.Address{}) {
-			db.TouchAddress(addr)
+		for _, record := range ef.AddressesForFiltering(l.Topics, l.Data, l.Address, common.Address{}) {
+			db.TouchAddress(&record)
 		}
 	}
 }
@@ -162,13 +188,13 @@ func applyEventFilter(ef *eventfilter.EventFilter, db *state.StateDB) {
 // aliased by the Inbox contract.
 func touchRetryableAddresses(db *state.StateDB, tx *types.Transaction) {
 	if inner, ok := tx.GetInner().(*types.ArbitrumSubmitRetryableTx); ok {
-		db.TouchAddress(inner.Beneficiary)
-		db.TouchAddress(inner.FeeRefundAddr)
+		db.TouchAddress(&filter.FilteredAddressRecord{Address: inner.Beneficiary, FilterReason: filter.FilterReason{Reason: filter.ReasonRetryableBeneficiary, EventRuleMatch: nil}})
+		db.TouchAddress(&filter.FilteredAddressRecord{Address: inner.FeeRefundAddr, FilterReason: filter.FilterReason{Reason: filter.ReasonRetryableFeeRefund, EventRuleMatch: nil}})
 		if inner.RetryTo != nil {
-			db.TouchAddress(*inner.RetryTo)
+			db.TouchAddress(&filter.FilteredAddressRecord{Address: *inner.RetryTo, FilterReason: filter.FilterReason{Reason: filter.ReasonRetryableTo, EventRuleMatch: nil}})
 		}
-		db.TouchAddress(arbosutil.InverseRemapL1Address(inner.Beneficiary))
-		db.TouchAddress(arbosutil.InverseRemapL1Address(inner.FeeRefundAddr))
+		db.TouchAddress(&filter.FilteredAddressRecord{Address: arbosutil.InverseRemapL1Address(inner.Beneficiary), FilterReason: filter.FilterReason{Reason: filter.ReasonDealiasedRetryableBeneficiary, EventRuleMatch: nil}})
+		db.TouchAddress(&filter.FilteredAddressRecord{Address: arbosutil.InverseRemapL1Address(inner.FeeRefundAddr), FilterReason: filter.FilterReason{Reason: filter.ReasonDealiasedRetryableFeeRefund, EventRuleMatch: nil}})
 	}
 }
 
@@ -223,9 +249,11 @@ type ExecutionEngine struct {
 
 	runningMaintenance atomic.Bool
 
-	addressChecker               state.AddressChecker
-	eventFilter                  *eventfilter.EventFilter
-	transactionFiltererRPCClient *TransactionFiltererRPCClient
+	addressChecker                 state.AddressChecker
+	eventFilter                    *eventfilter.EventFilter
+	transactionFiltererRPCClient   *TransactionFiltererRPCClient
+	filteringReportRPCClient       *FilteringReportRPCClient
+	disableDelayedSequencingFilter bool
 }
 
 func NewL1PriceData() *L1PriceData {
@@ -241,15 +269,26 @@ func init() {
 	}
 }
 
-func NewExecutionEngine(bc *core.BlockChain, syncTillBlock uint64, exposeMultiGas bool, exposeMetadataHeaders bool) *ExecutionEngine {
+func NewExecutionEngine(
+	bc *core.BlockChain,
+	syncTillBlock uint64,
+	exposeMultiGas bool,
+	disableDelayedSequencingFilter bool,
+	addressChecker state.AddressChecker,
+	filteringReportRPCClient *FilteringReportRPCClient,
+	exposeMetadataHeaders bool,
+) *ExecutionEngine {
 	return &ExecutionEngine{
-		bc:                    bc,
-		resequenceChan:        make(chan []*arbostypes.MessageWithMetadata),
-		newBlockNotifier:      make(chan struct{}, 1),
-		cachedL1PriceData:     NewL1PriceData(),
-		exposeMultiGas:        exposeMultiGas,
-		exposeMetadataHeaders: exposeMetadataHeaders,
-		syncTillBlock:         syncTillBlock,
+		bc:                             bc,
+		resequenceChan:                 make(chan []*arbostypes.MessageWithMetadata),
+		newBlockNotifier:               make(chan struct{}, 1),
+		cachedL1PriceData:              NewL1PriceData(),
+		exposeMultiGas:                 exposeMultiGas,
+		syncTillBlock:                  syncTillBlock,
+		disableDelayedSequencingFilter: disableDelayedSequencingFilter,
+		addressChecker:                 addressChecker,
+		filteringReportRPCClient:       filteringReportRPCClient,
+		exposeMetadataHeaders:          exposeMetadataHeaders,
 	}
 }
 
@@ -303,8 +342,14 @@ func PopulateStylusTargetCache(targetConfig *StylusTargetConfig) error {
 			return fmt.Errorf("unsupported stylus target: %v", target)
 		}
 		isNative := target == localTarget
-		err := programs.SetTarget(target, effectiveStylusTarget, isNative)
-		if err != nil {
+		// Register both cranelift and non-cranelift variants so that
+		// compileNative can look up either name in the Rust target cache.
+		if craneliftTarget, err := rawdb.CraneliftTarget(target); err == nil {
+			if err := programs.SetTarget(craneliftTarget, effectiveStylusTarget, isNative); err != nil {
+				return fmt.Errorf("failed to set stylus cranelift target: %w", err)
+			}
+		}
+		if err := programs.SetTarget(target, effectiveStylusTarget, isNative); err != nil {
 			return fmt.Errorf("failed to set stylus target: %w", err)
 		}
 		nativeSet = nativeSet || isNative
@@ -323,6 +368,9 @@ func (s *ExecutionEngine) Initialize(rustCacheCapacityMB uint32, targetConfig *S
 		return fmt.Errorf("error populating stylus target cache: %w", err)
 	}
 	s.wasmTargets = targetConfig.WasmTargets()
+	programs.SetAllowFallback(targetConfig.AllowFallback)
+	// Establishes the baseline for doubleNativeStackSize (overflow recovery).
+	programs.SetInitialNativeStackSize(targetConfig.NativeStackSize)
 	return nil
 }
 
@@ -463,8 +511,15 @@ func (s *ExecutionEngine) Reorg(msgIdxOfFirstMsgToAdd arbutil.MessageIndex, newM
 		s.recorder.ReorgTo(lastBlockToKeep.Header())
 	}
 	if len(oldMessages) > 0 {
-		s.resequenceChan <- oldMessages
-		resequencing = true
+		// Use a select to avoid blocking forever if the resequence goroutine
+		// has already exited (e.g., because the context was cancelled during
+		// shutdown before the nodes were stopped).
+		select {
+		case s.resequenceChan <- oldMessages:
+			resequencing = true
+		case <-s.GetContext().Done():
+			log.Warn("ExecutionEngine: context cancelled, skipping message resequencing")
+		}
 	}
 	return newMessagesResults, nil
 }
@@ -559,9 +614,11 @@ func (s *ExecutionEngine) resequenceReorgedMessages(messages []*arbostypes.Messa
 func (s *ExecutionEngine) sequencerWrapper(sequencerFunc func() (*types.Block, error)) (*types.Block, error) {
 	attempts := 0
 	for {
-		s.createBlocksMutex.Lock()
-		block, err := sequencerFunc()
-		s.createBlocksMutex.Unlock()
+		block, err := func() (*types.Block, error) {
+			s.createBlocksMutex.Lock()
+			defer s.createBlocksMutex.Unlock()
+			return sequencerFunc()
+		}()
 		if !errors.Is(err, execution.ErrSequencerInsertLockTaken) {
 			return block, err
 		}
@@ -662,7 +719,7 @@ func (s *ExecutionEngine) sequenceTransactionsWithBlockMutex(header *arbostypes.
 	delayedMessagesRead := lastBlockHeader.Nonce.Uint64()
 
 	startTime := time.Now()
-	block, receipts, err := arbos.ProduceBlockAdvanced(
+	block, statedb, receipts, err := arbos.ProduceBlockAdvanced(
 		header,
 		delayedMessagesRead,
 		lastBlockHeader,
@@ -670,7 +727,7 @@ func (s *ExecutionEngine) sequenceTransactionsWithBlockMutex(header *arbostypes.
 		s.bc,
 		hooks,
 		false,
-		core.NewMessageCommitContext(s.wasmTargets),
+		core.NewMessageSequencingContext(s.wasmTargets),
 		s.exposeMultiGas,
 	)
 	if err != nil {
@@ -836,7 +893,7 @@ func (s *ExecutionEngine) MessageIndexToBlockNumber(msgIdx arbutil.MessageIndex)
 }
 
 // must hold createBlockMutex
-func (s *ExecutionEngine) createBlockFromNextMessage(msg *arbostypes.MessageWithMetadata, isMsgForPrefetch bool, applyDelayedFilter bool) (*types.Block, *state.StateDB, types.Receipts, error) {
+func (s *ExecutionEngine) createBlockFromNextMessage(msg *arbostypes.MessageWithMetadata, isMsgForPrefetch bool, isSequencing bool) (*types.Block, *state.StateDB, types.Receipts, error) {
 	currentHeader := s.bc.CurrentBlock()
 	if currentHeader == nil {
 		return nil, nil, nil, errors.New("failed to get current block header")
@@ -877,7 +934,9 @@ func (s *ExecutionEngine) createBlockFromNextMessage(msg *arbostypes.MessageWith
 	defer statedb.StopPrefetcher()
 
 	var runCtx *core.MessageRunContext
-	if isMsgForPrefetch {
+	if isSequencing {
+		runCtx = core.NewMessageSequencingContext(s.wasmTargets)
+	} else if isMsgForPrefetch {
 		runCtx = core.NewMessagePrefetchContext()
 	} else {
 		runCtx = core.NewMessageCommitContext(s.wasmTargets)
@@ -887,7 +946,7 @@ func (s *ExecutionEngine) createBlockFromNextMessage(msg *arbostypes.MessageWith
 	// halt on filtered addresses. This duplicates logic from arbos.ProduceBlock but with
 	// different hooks, and we need access to filteringHooks.FilteredTxHash to report
 	// which tx caused the halt.
-	if applyDelayedFilter {
+	if !s.disableDelayedSequencingFilter && isSequencing {
 		chainConfig := s.bc.Config()
 		currentArbosVersion := types.DeserializeHeaderExtraInformation(currentHeader).ArbOSFormatVersion
 		txes, err := arbos.ParseL2Transactions(msg.Message, chainConfig.ChainID, currentArbosVersion)
@@ -897,7 +956,7 @@ func (s *ExecutionEngine) createBlockFromNextMessage(msg *arbostypes.MessageWith
 		}
 		filteringHooks := NewDelayedFilteringSequencingHooks(txes, s.eventFilter)
 
-		block, receipts, err := arbos.ProduceBlockAdvanced(
+		block, statedb, receipts, err := arbos.ProduceBlockAdvanced(
 			msg.Message.Header,
 			msg.DelayedMessagesRead,
 			currentHeader,
@@ -915,9 +974,6 @@ func (s *ExecutionEngine) createBlockFromNextMessage(msg *arbostypes.MessageWith
 		if len(filteringHooks.FilteredTxHashes) > 0 {
 			if s.transactionFiltererRPCClient != nil {
 				s.LaunchThread(func(ctx context.Context) {
-					// Call transaction-filterer sequentially.
-					// To avoid nonce collisions when adding a tx to ArbFilteredTransactionsManager,
-					// transaction-filterer will process only one Filter call at a time.
 					for _, filteredTxHash := range filteringHooks.FilteredTxHashes {
 						_, err := s.transactionFiltererRPCClient.Filter(filteredTxHash).Await(ctx)
 						if err != nil {
@@ -935,7 +991,7 @@ func (s *ExecutionEngine) createBlockFromNextMessage(msg *arbostypes.MessageWith
 		return block, statedb, receipts, nil
 	}
 
-	block, receipts, err := arbos.ProduceBlock(
+	block, statedb, receipts, err := arbos.ProduceBlock(
 		msg.Message,
 		msg.DelayedMessagesRead,
 		currentHeader,
@@ -1241,13 +1297,6 @@ func (s *ExecutionEngine) ArbOSVersionForMessageIndex(msgIdx arbutil.MessageInde
 	return containers.NewReadyPromise(extra.ArbOSFormatVersion, nil)
 }
 
-func (s *ExecutionEngine) StopAndWait() {
-	if s.transactionFiltererRPCClient != nil {
-		s.transactionFiltererRPCClient.StopAndWait()
-	}
-	s.StopWaiter.StopAndWait()
-}
-
 func (s *ExecutionEngine) Start(ctxIn context.Context) error {
 	s.StopWaiter.Start(ctxIn, s)
 
@@ -1261,6 +1310,7 @@ func (s *ExecutionEngine) Start(ctxIn context.Context) error {
 		if err != nil {
 			return fmt.Errorf("failed to start transaction filterer RPC client: %w", err)
 		}
+		s.TrackChild(s.transactionFiltererRPCClient)
 	}
 
 	s.LaunchThread(func(ctx context.Context) {
@@ -1367,7 +1417,7 @@ func (s *ExecutionEngine) MaintenanceStatus() *execution.MaintenanceStatus {
 	}
 }
 
-func (s *ExecutionEngine) SetAddressChecker(checker state.AddressChecker) {
+func (s *ExecutionEngine) SetAddressChecker(_ *testing.T, checker state.AddressChecker) {
 	s.addressChecker = checker
 }
 

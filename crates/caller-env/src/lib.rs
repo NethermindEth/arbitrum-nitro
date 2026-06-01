@@ -6,9 +6,9 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use rand_pcg::Pcg32;
 
 pub use guest_ptr::GuestPtr;
+use rand_pcg::Pcg32;
 pub use wasip1_stub::Errno;
 
 #[cfg(feature = "static_caller")]
@@ -21,6 +21,7 @@ pub mod wasmer_traits;
 pub mod brotli;
 
 pub mod arbcrypto;
+pub mod wavmio;
 
 mod guest_ptr;
 pub mod wasip1_stub;

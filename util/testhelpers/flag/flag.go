@@ -24,6 +24,7 @@ var (
 	LoggingFlag                                   = fs.String("logging", "", "Enable logging")
 	CompileFlag                                   = fs.String("test_compile", "", "[STORE|LOAD] to allow store/load in compile test")
 	ConsensusExecutionInSameProcessUseRPC         = fs.Bool("consensus_execution_in_same_process_use_rpc", false, "Whether to enable communication between consensus and execution side of a node via json rpc")
+	MelFlag                                       = fs.Bool("test_mel", false, "Whether to enable Message Extraction Layer (MEL) for tests")
 
 	// Execution mode flags for multi-EL testing (internal, self, external, comparison)
 	ExecutionMode  = fs.String("execution-mode", "", "Execution mode: internal (default), self, external, comparison")

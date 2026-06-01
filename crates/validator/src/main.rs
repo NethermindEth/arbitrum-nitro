@@ -1,21 +1,21 @@
 // Copyright 2025-2026, Offchain Labs, Inc.
 // For license information, see https://github.com/OffchainLabs/nitro/blob/master/LICENSE.md
 
+use std::sync::Arc;
+
 use anyhow::Result;
 use clap::Parser;
 use config::ServerConfig;
 use logging::init_logging;
-use std::sync::Arc;
 use tokio::{net::TcpListener, runtime::Builder};
 use tracing::info;
 
-use crate::config::ServerState;
-use crate::server::run_server;
+use crate::{config::ServerState, server::run_server};
 
 mod config;
 mod engine;
+mod jwt;
 mod logging;
-mod router;
 mod server;
 mod spawner_endpoints;
 fn main() -> Result<()> {
@@ -42,5 +42,7 @@ async fn async_main(server_config: ServerConfig, available_workers: usize) -> Re
 
     let state = Arc::new(ServerState::new(&server_config, available_workers)?);
     let listener = TcpListener::bind(server_config.address).await?;
+    let local_addr = listener.local_addr()?;
+    info!("Listening on {local_addr}");
     run_server(listener, state).await
 }

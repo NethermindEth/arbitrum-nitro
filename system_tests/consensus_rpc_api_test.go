@@ -1,3 +1,5 @@
+// Copyright 2025-2026, Offchain Labs, Inc.
+// For license information, see https://github.com/OffchainLabs/nitro/blob/master/LICENSE.md
 // For license information, see https://github.com/OffchainLabs/nitro/blob/master/LICENSE.md
 
 package arbtest
@@ -137,7 +139,7 @@ func TestGetL1ConfirmationsForL3WithL2WithoutConsensusArbRPC(t *testing.T) {
 
 	// forces using http RPC instead of direct method call
 	builder.l2StackConfig.HTTPHost = "localhost"
-	builder.l2StackConfig.HTTPPort = getRandomPort(t)
+	builder.l2StackConfig.HTTPPort = getFreePort(t)
 	// disables arb module on HTTP RPC
 	httpModulesWithoutArb := make([]string, 0)
 	for i, module := range builder.l2StackConfig.HTTPModules {
@@ -153,12 +155,12 @@ func TestGetL1ConfirmationsForL3WithL2WithoutConsensusArbRPC(t *testing.T) {
 	l2SecondNodeNodeConfig := arbnode.ConfigDefaultL1NonSequencerTest()
 	l2SecondNodeStackConfig := builder.l2StackConfig
 	l2SecondNodeStackConfig.DataDir = t.TempDir()
-	l2SecondNodeStackConfig.HTTPPort = getRandomPort(t)
+	l2SecondNodeStackConfig.HTTPPort = getFreePort(t)
 	testClientL2SecondNode, cleanupL2SecondNode := builder.Build2ndNode(t, &SecondNodeParams{nodeConfig: l2SecondNodeNodeConfig, stackConfig: l2SecondNodeStackConfig})
 	defer cleanupL2SecondNode()
 
 	builder.l3Config.stackConfig.HTTPHost = "localhost"
-	builder.l3Config.stackConfig.HTTPPort = getRandomPort(t)
+	builder.l3Config.stackConfig.HTTPPort = getFreePort(t)
 	cleanupL3 := builder.BuildL3OnL2(t)
 	defer cleanupL3()
 
@@ -174,6 +176,7 @@ func TestFindBatch(t *testing.T) {
 	defer cancel()
 
 	builder := NewNodeBuilder(ctx).DefaultConfig(t, true).DontParalellise()
+	builder.nodeConfig.MessageExtraction.Enable = false
 	l1Info := builder.L1Info
 	initialBalance := new(big.Int).Lsh(big.NewInt(1), 200)
 	l1Info.GenerateGenesisAccount("deployer", initialBalance)
@@ -223,7 +226,7 @@ func TestFindBatch(t *testing.T) {
 		if expBatchNum != gotBatchNum {
 			Fatal(t, "wrong result from findBatchContainingBlock. blocknum ", blockNum, " expected ", expBatchNum, " got ", gotBatchNum)
 		}
-		batchL1Block, err := builder.L2.ConsensusNode.InboxTracker.GetBatchParentChainBlock(gotBatchNum)
+		batchL1Block, err := builder.L2.ConsensusNode.GetParentChainDataSource().GetBatchParentChainBlock(gotBatchNum)
 		Require(t, err)
 		blockHeader, err := builder.L2.Client.HeaderByNumber(ctx, new(big.Int).SetUint64(blockNum))
 		Require(t, err)

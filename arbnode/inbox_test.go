@@ -115,8 +115,7 @@ func (w *execClientWrapper) ArbOSVersionForMessageIndex(msgIdx arbutil.MessageIn
 	return w.ExecutionEngine.ArbOSVersionForMessageIndex(msgIdx)
 }
 
-func (w *execClientWrapper) StopAndWait() {
-}
+func (w *execClientWrapper) StopAndWait() {}
 
 func NewTransactionStreamerForTest(t *testing.T, ctx context.Context, ownerAddress common.Address) (*gethexec.ExecutionEngine, *TransactionStreamer, ethdb.Database, *core.BlockChain) {
 	chainConfig := chaininfo.ArbitrumDevTestChainConfig()
@@ -142,14 +141,14 @@ func NewTransactionStreamerForTest(t *testing.T, ctx context.Context, ownerAddre
 	}
 
 	transactionStreamerConfigFetcher := func() *TransactionStreamerConfig { return &DefaultTransactionStreamerConfig }
-	execEngine := gethexec.NewExecutionEngine(bc, 0, false)
+	execEngine := gethexec.NewExecutionEngine(bc, 0, false, false, nil, nil)
 	stylusTargetConfig := &gethexec.DefaultStylusTargetConfig
 	Require(t, stylusTargetConfig.Validate()) // pre-processes config (i.a. parses wasmTargets)
 	if err := execEngine.Initialize(gethexec.DefaultCachingConfig.StylusLRUCacheCapacity, &gethexec.DefaultStylusTargetConfig); err != nil {
 		Fail(t, err)
 	}
 	execSeq := &execClientWrapper{execEngine, t}
-	inbox, err := NewTransactionStreamer(ctx, consensusDB, bc.Config(), execSeq, nil, make(chan error, 1), transactionStreamerConfigFetcher, &DefaultSnapSyncConfig)
+	inbox, err := NewTransactionStreamer(ctx, consensusDB, bc.Config(), execSeq, nil, make(chan error, 1), transactionStreamerConfigFetcher)
 	if err != nil {
 		Fail(t, err)
 	}

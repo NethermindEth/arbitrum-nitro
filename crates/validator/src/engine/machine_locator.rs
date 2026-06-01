@@ -1,16 +1,17 @@
 // Copyright 2026, Offchain Labs, Inc.
 // For license information, see https://github.com/OffchainLabs/nitro/blob/master/LICENSE.md
 
-use crate::engine::ModuleRoot;
+use std::{
+    collections::HashSet,
+    env, fs,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
+
 use anyhow::Result;
-use std::collections::HashSet;
-use std::env;
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::str::FromStr;
-use tracing::debug;
-use tracing::info;
-use tracing::warn;
+use tracing::{debug, info, warn};
+
+use crate::engine::ModuleRoot;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
 pub struct ModuleRootMeta {
@@ -53,10 +54,10 @@ impl MachineLocator {
             }
 
             // Check relative to the executable
-            if let Ok(exec_path) = env::current_exe() {
-                if let Some(grandparent_of_exec) = exec_path.parent().and_then(|p| p.parent()) {
-                    dirs.push(grandparent_of_exec.join("machines"));
-                }
+            if let Ok(exec_path) = env::current_exe()
+                && let Some(grandparent_of_exec) = exec_path.parent().and_then(|p| p.parent())
+            {
+                dirs.push(grandparent_of_exec.join("machines"));
             }
         }
 
@@ -99,13 +100,7 @@ impl MachineLocator {
 
                 let dir_name = entry.file_name().to_string_lossy().to_string();
 
-                // IMPORTANT:
-                // Go's moduleRoot.Hex() returns "0x" + hex.
-                // Rust Bytes32 Display impl returns raw hex.
-                // We must format it manually to match Go's directory naming convention.
-                let module_root_hex = format!("0x{module_root}");
-
-                if dir_name != "latest" && dir_name != module_root_hex {
+                if dir_name != "latest" && dir_name != module_root.to_string() {
                     continue;
                 }
 
@@ -149,7 +144,7 @@ impl MachineLocator {
             if module_root == ModuleRoot::default() || module_root == self.latest.module_root {
                 self.root_path.join("latest")
             } else {
-                self.root_path.join(format!("0x{module_root}"))
+                self.root_path.join(module_root.to_string())
             };
 
         if !module_root_path.exists() || !module_root_path.is_dir() {
@@ -172,20 +167,22 @@ impl MachineLocator {
 
 #[cfg(test)]
 mod tests {
-    use crate::engine::{
-        machine_locator::{MachineLocator, ModuleRootMeta},
-        ModuleRoot,
-    };
-    use anyhow::{anyhow, Result};
-    use arbutil::Bytes32;
-    use rand::RngCore;
     use std::{
         path::{Path, PathBuf},
         str::FromStr,
     };
 
-    fn get_temp_machines_dir() -> Result<PathBuf> {
-        Ok(tempdir::TempDir::new("machines")?.into_path())
+    use anyhow::{Result, anyhow};
+    use arbutil::Bytes32;
+    use rand::Rng;
+
+    use crate::engine::{
+        ModuleRoot,
+        machine_locator::{MachineLocator, ModuleRootMeta},
+    };
+
+    fn get_temp_machines_dir() -> Result<tempfile::TempDir> {
+        Ok(tempfile::tempdir()?)
     }
 
     fn get_real_machines_dir() -> PathBuf {
@@ -203,7 +200,7 @@ mod tests {
                 .expect("Failed to create target/machines directory");
 
             let actual_root = match root {
-                "latest" => format!("0x{}", gen_random_module_root()),
+                "latest" => gen_random_module_root().to_string(),
                 hash => hash.into(),
             };
             std::fs::write(complete_root_path.join("module-root.txt"), &actual_root)
@@ -224,7 +221,7 @@ mod tests {
 
     fn gen_random_module_root() -> ModuleRoot {
         let mut bytes = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut bytes);
+        rand::rng().fill_bytes(&mut bytes);
 
         Bytes32(bytes)
     }
@@ -252,8 +249,8 @@ mod tests {
 
             for _ in 0..root_count {
                 let random_module_root = gen_random_module_root();
-                let module_root_str = format!("0x{random_module_root}");
-                let root_meta = get_or_create_root_path(&machines_dir, &module_root_str);
+                let root_meta =
+                    get_or_create_root_path(&machines_dir, &random_module_root.to_string());
 
                 root_metas.push(root_meta);
             }
@@ -296,10 +293,12 @@ mod tests {
                 // let root_meta_wrapper = file_manager.root_metas.first().unwrap();
                 let mod_root = root_meta_wrapper.module_root;
                 let module_root = machine_locator.get_machine_path(mod_root).unwrap();
-                assert!(module_root
-                    .to_str()
-                    .unwrap()
-                    .contains(&format!("0x{mod_root}")));
+                assert!(
+                    module_root
+                        .to_str()
+                        .unwrap()
+                        .contains(&mod_root.to_string())
+                );
             });
 
         Ok(())
@@ -307,12 +306,12 @@ mod tests {
 
     #[test]
     fn test_machine_locator_one_machine() -> Result<()> {
-        test_machine_locator(1, &Some(get_temp_machines_dir()?))
+        test_machine_locator(1, &Some(get_temp_machines_dir()?.path().to_path_buf()))
     }
 
     #[test]
     fn test_machine_locator_many_machines() -> Result<()> {
-        test_machine_locator(10, &Some(get_temp_machines_dir()?))
+        test_machine_locator(10, &Some(get_temp_machines_dir()?.path().to_path_buf()))
     }
 
     #[test]
@@ -340,7 +339,7 @@ mod tests {
         let error = result.err().unwrap();
         let err_str = error.to_string();
 
-        let expected_path = get_real_machines_dir().join(format!("0x{random_module_root}"));
+        let expected_path = get_real_machines_dir().join(random_module_root.to_string());
         let expected_error = format!("module root path {expected_path:?} does not exist");
         assert_eq!(err_str, expected_error);
 
